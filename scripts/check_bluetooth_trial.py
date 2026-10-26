@@ -24,15 +24,15 @@ def main():
   assert 'hsuart1 = &qupv3_se6_4uart;' in dts
   common = (source / 'arch/arm64/boot/dts/qcom/comma_common.dtsi').read_text()
   assert re.search(r'&qupv3_se6_4uart\s*\{\s*status = "ok";', common)
-  for path in (ROOT / 'userspace/files/amdgpu').glob('*.zst'):
+  for path in (ROOT / 'userspace/root/usr/lib/firmware/amdgpu').glob('*.zst'):
     data = path.read_bytes()
     assert data[:4] == b'\x28\xb5\x2f\xfd', path
     assert data[4] & 0xE0, f'Zstd frame content size absent: {path}'
-  helper = (ROOT / 'userspace/usr/comma/bluetooth-radio').read_text()
+  helper = (ROOT / 'userspace/root/usr/comma/bluetooth-radio').read_text()
   assert 'BLUETOOTH_STATE=/data/bluetooth' in helper
   assert '/dev/ttyHS1' in helper
   assert 'mount -o ro,nosuid,nodev,noexec' in helper
-  service = (ROOT / 'userspace/files/carrot-bluetooth-radio.service').read_text()
+  service = (ROOT / 'userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service').read_text()
   assert 'ExecCondition=/usr/bin/test -f /data/bluetooth/ENABLED' in service
   assert 'RequiresMountsFor=/data' in service
   print('Bluetooth kernel options, GPS UART, persistent state and AGNOS 19.8 firmware headers verified')

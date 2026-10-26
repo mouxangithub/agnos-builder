@@ -2,7 +2,7 @@ name: build carrot AGNOS camera BT2 trial
 
 on:
   push:
-    branches: [ carrot-camera-bt2-19.8 ]
+    branches: [ master, carrot-camera-bt2-19.8 ]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
           python3 scripts/check_qca_diagnostics.py
           git -C agnos-kernel-sdm845 apply --check ../patches/camera-sof-history-trace.patch
           git -C agnos-kernel-sdm845 apply ../patches/camera-sof-history-trace.patch
-          bash -n userspace/usr/comma/bluetooth-radio
+          bash -n userspace/root/usr/comma/bluetooth-radio
           python3 scripts/check_bluetooth_trial.py
 
       - name: Build C3X/C4 boot image
