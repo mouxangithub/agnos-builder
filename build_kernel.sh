@@ -68,6 +68,8 @@ build_kernel() {
 
   # Avoid LINUX_COMPILE_HOST to change on every run thus invalidating cache
   # https://patchwork.kernel.org/project/linux-kbuild/patch/1302015561-21047-8-git-send-email-mmarek@suse.cz/
+  # Pin the user too, so the kernel banner stays independent of the CI runner account.
+  export KBUILD_BUILD_USER="docker"
   export KBUILD_BUILD_HOST="docker"
 
   # Disable all warnings

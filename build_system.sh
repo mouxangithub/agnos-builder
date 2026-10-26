@@ -9,6 +9,9 @@ UBUNTU_FILE_CHECKSUM="7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48d
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 cd $DIR
 
+# Fail fast on clobbered checked-in inputs before any Docker work starts.
+./scripts/validate_carrot_inputs.sh
+
 BUILD_DIR="$DIR/build"
 OUTPUT_DIR="$DIR/output"
 

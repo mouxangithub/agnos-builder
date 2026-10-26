@@ -57,6 +57,7 @@ jobs:
           git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
           bash -n userspace/root/usr/comma/bluetooth-radio
           python3 scripts/check_bluetooth_trial.py
+          ./scripts/validate_carrot_inputs.sh
 
       - name: Build C3X/C4 boot image
         run: |
