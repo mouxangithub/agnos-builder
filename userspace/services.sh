@@ -48,33 +48,42 @@ systemctl mask systemd-backlight@.service
 systemctl mask alsa-restore.service
 ln -s /dev/null /etc/udev/rules.d/90-alsa-restore.rules
 systemctl disable dpkg-db-backup.timer
-systemctl disable ua-reboot-cmds.service
-systemctl disable ubuntu-advantage.service
-systemctl disable update-notifier-download.timer
-systemctl disable update-notifier-download.service
-systemctl disable update-notifier-motd.timer
-systemctl disable update-notifier-motd.service
-systemctl disable man-db.timer
+# The Ubuntu unit set differs between the AGNOS 19.8 and 20.2 base images
+# (e.g. 20.2 no longer ships ua-reboot-cmds.service), so every disable for a
+# stock unit must tolerate a missing unit. systemctl disable exits non-zero
+# otherwise and the docker build fails.
+disable_optional() {
+  systemctl disable "$@" 2>/dev/null || true
+}
+
+disable_optional ua-reboot-cmds.service
+disable_optional ubuntu-advantage.service
+disable_optional update-notifier-download.timer
+disable_optional update-notifier-download.service
+disable_optional update-notifier-motd.timer
+disable_optional update-notifier-motd.service
+disable_optional man-db.timer
 
 # Disable NFS stuff by default
-systemctl disable rpcbind
-systemctl disable dnsmasq.service
-systemctl disable nfs-client.target
-systemctl disable remote-fs-pre.target
+disable_optional rpcbind
+disable_optional dnsmasq.service
+disable_optional nfs-client.target
+disable_optional remote-fs-pre.target
 
 # Service is from ifupdown but ifupdown is managed by NetworkManager
 # networking service fails with "ifup: failed to bring up lo"
 # no influence on any interface, all interfaces work fine
-systemctl disable networking.service
+disable_optional networking.service
 
 # TODO: this doesn't actually disable unless run twice...
 # Service fails with Status: "No devices to monitor"
-systemctl disable smartd.service
-systemctl disable smartd.service
+disable_optional smartd.service
 
-systemctl disable console-setup.service
-systemctl disable sfsconfig.service
+disable_optional console-setup.service
+disable_optional sfsconfig.service
 
 # Opt-in native Bluetooth trial; inactive unless /data/bluetooth/ENABLED exists.
+# Kept strict on purpose: if the unit is missing the image is broken and the
+# build should fail loudly.
 systemctl enable carrot-bluetooth-radio.service
-systemctl disable bluetooth.service
+disable_optional bluetooth.service

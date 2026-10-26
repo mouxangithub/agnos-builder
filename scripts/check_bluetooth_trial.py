@@ -35,7 +35,7 @@ def main():
   service = (ROOT / 'userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service').read_text()
   assert 'ExecCondition=/usr/bin/test -f /data/bluetooth/ENABLED' in service
   assert 'RequiresMountsFor=/data' in service
-  print('Bluetooth kernel options, GPS UART, persistent state and AGNOS 19.8 firmware headers verified')
+  print('Bluetooth kernel options, GPS UART, persistent state and AGNOS AMD firmware headers verified')
 
 
 if __name__ == '__main__':

@@ -1,20 +1,20 @@
-name: build carrot AGNOS 19.8 Bluetooth
+name: build carrot AGNOS 20.2 Bluetooth
 
 on:
   push:
-    branches: [ master, carrot-bluetooth-19.8 ]
+    branches: [ master, carrot-bluetooth-20.2, carrot-bluetooth-19.8 ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: carrot-agnos-bluetooth-19.8
+  group: carrot-agnos-bluetooth-20.2
   cancel-in-progress: true
 
 env:
-  AGNOS_VERSION: 19.8-carrot-bt1
-  RELEASE_TAG: agnos-19.8-carrot-bt1
+  AGNOS_VERSION: 20.2-carrot-bt1
+  RELEASE_TAG: agnos-20.2-carrot-bt1
   OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
 
 jobs:
@@ -118,7 +118,7 @@ jobs:
       - name: Upload verification artifact
         uses: actions/upload-artifact@v4
         with:
-          name: carrot-agnos-19.8-bluetooth
+          name: carrot-agnos-20.2-bluetooth
           path: output/carrot-ota
           if-no-files-found: error
           compression-level: 0
@@ -132,7 +132,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --prerelease \
-              --title 'Carrot AGNOS 19.8 Bluetooth trial 1' \
-              --notes 'AGNOS 19.8 userspace and AMD firmware with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. Opt-in radio only; tested devices are recorded separately. Device-specific manifests are provided for C3/C3 clone and C3X/C4. Hardware rollout remains experimental.'
+              --title 'Carrot AGNOS 20.2 Bluetooth trial 1' \
+              --notes 'AGNOS 20.2 userspace and AMD firmware with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. Opt-in radio only; tested devices are recorded separately. Device-specific manifests are provided for C3/C3 clone and C3X/C4. Hardware rollout remains experimental.'
           fi
           gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber

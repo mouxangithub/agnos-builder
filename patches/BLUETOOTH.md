@@ -1,14 +1,19 @@
-# Carrot AGNOS 19.8 Bluetooth trial
+# Carrot AGNOS Bluetooth trial
 
 This experiment is scoped to ajouatom/openpilot `carrot-cinque_v3`. It preserves
 the pinned Cinque v3 model and runtime. No rollout to `carrot-wip` is intended.
 
-Base: Carrot builder `ed4d8d5`, merged with commaai/agnos-builder `bdbf1bc`
-(AGNOS 19.8). The kernel remains pinned to
+Base: as of the `20.2-carrot-bt1` release, Carrot builder merged with
+commaai/agnos-builder `5932dc2` (AGNOS 20.2; earlier builds were based on
+AGNOS 19.8 via `bdbf1bc`). The kernel remains bumped from
 `eccd146599f2e2f159d951092642689bede91632` with the existing USB-PD v2/v3
 patches on both boot images and the existing C3 PCIe/NVMe patch only on C3.
-AGNOS 19.7/19.8 updates AMD GPU firmware and adds Zstandard frame content
-sizes needed by newer tinygrad. It also disables unused ALSA state restoration.
+AGNOS 19.7/19.8 updated AMD GPU firmware and added Zstandard frame content
+sizes needed by newer tinygrad and disabled unused ALSA state restoration;
+20.1/20.2 additionally removed rsyslog/logrotate and the bundled GCC, and
+reworked the userspace tree into `userspace/root/`. AGNOS 20.2 removed bluez
+and rfkill from the base image, so both are re-added here for the Bluetooth
+radio.
 Carrot's Adreno library selection is retained. Tinygrad itself is not updated.
 
 Bluetooth port attribution:

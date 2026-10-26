@@ -145,7 +145,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --prerelease \
-              --title 'Carrot AGNOS 19.8 camera BT2 trial' \
-              --notes 'Experimental camera investigation branch only. Based on bt1 with Qualcomm diagnostic ACL routing corrected; Bluetooth functionality and existing camera scheduling are preserved. This is not a confirmed camera-gap fix. C3 and C4 hardware validation are separate.'
+              --title 'Carrot AGNOS 19.8 camera BT2 trial (frozen bt1 userspace)' \
+              --notes 'Experimental camera investigation branch only. Derived from the frozen AGNOS 19.8-carrot-bt1 userspace image (NOT 20.2) with Qualcomm diagnostic ACL routing corrected; Bluetooth functionality and existing camera scheduling are preserved. This is not a confirmed camera-gap fix. C3 and C4 hardware validation are separate.'
           fi
-          gh release upload "$RELEASE_TAG" output/carrot-ota/*
+          gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber
