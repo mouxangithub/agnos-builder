@@ -1,20 +1,18 @@
-name: build carrot AGNOS 19.8 Bluetooth
+name: build carrot AGNOS Bluetooth
 
 on:
   push:
-    branches: [ master, carrot-bluetooth-19.8 ]
+    branches: [ master ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: carrot-agnos-bluetooth-19.8
+  group: carrot-agnos-bluetooth
   cancel-in-progress: true
 
 env:
-  AGNOS_VERSION: 19.8-carrot-bt1
-  RELEASE_TAG: agnos-19.8-carrot-bt1
   OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
 
 jobs:
@@ -28,8 +26,20 @@ jobs:
           lfs: true
           submodules: true
 
-      - name: Set custom AGNOS version
-        run: printf '%s' "$AGNOS_VERSION" > VERSION
+      # The repository VERSION is the single source of truth: it tracks
+      # whatever the upstream comma AGNOS tree carries after each sync, so
+      # packaging and the release tag follow it with no workflow edits.
+      - name: Read AGNOS version from the repository
+        run: |
+          AGNOS_VERSION="$(tr -d '[:space:]' < VERSION)"
+          case "$AGNOS_VERSION" in
+            ''|*[!A-Za-z0-9._-]*)
+              echo "VERSION contains an unsafe or empty value: '$AGNOS_VERSION'" >&2
+              exit 1 ;;
+          esac
+          echo "AGNOS_VERSION=$AGNOS_VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=agnos-$AGNOS_VERSION" >> "$GITHUB_ENV"
+          echo "Building AGNOS $AGNOS_VERSION as release agnos-$AGNOS_VERSION"
 
       - name: Apply and verify C3X/C4 USB-PD patches
         run: |
@@ -118,7 +128,7 @@ jobs:
       - name: Upload verification artifact
         uses: actions/upload-artifact@v4
         with:
-          name: carrot-agnos-19.8-bluetooth
+          name: carrot-agnos-${{ env.AGNOS_VERSION }}-bluetooth
           path: output/carrot-ota
           if-no-files-found: error
           compression-level: 0
@@ -132,7 +142,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --prerelease \
-              --title 'Carrot AGNOS 19.8 Bluetooth trial 1' \
-              --notes 'AGNOS 19.8 userspace and AMD firmware with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. Opt-in radio only; tested devices are recorded separately. Device-specific manifests are provided for C3/C3 clone and C3X/C4. Hardware rollout remains experimental.'
+              --title "Carrot AGNOS $AGNOS_VERSION Bluetooth trial" \
+              --notes "AGNOS $AGNOS_VERSION userspace and AMD firmware with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. Opt-in radio only; tested devices are recorded separately. Device-specific manifests are provided for C3/C3 clone and C3X/C4. Hardware rollout remains experimental."
           fi
           gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber
