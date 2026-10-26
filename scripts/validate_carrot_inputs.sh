@@ -55,11 +55,11 @@ expect_hash userspace/root/usr/lib/firmware/amdgpu/gc_12_0_0_rlc.bin.zst c652022
 expect_hash userspace/root/usr/lib/firmware/amdgpu/psp_14_0_2_sos.bin.zst e81164f81e763d8de70539e7fdcc8ea58aa9b025cf9c95361a4c63bc791177f4
 expect_hash userspace/root/usr/lib/firmware/amdgpu/sdma_7_0_0.bin.zst 68add1d0817164f4fde6fd971270e4652814558545cb2400a946004126986576
 expect_hash userspace/root/usr/lib/firmware/amdgpu/smu_14_0_2.bin.zst b0a03edf1c7e5a171fafe0710165b6ce90540450d1cf00132d8f0033b6ad2099
-expect_hash userspace/root/usr/comma/bluetooth-radio 9f3902324c5a9a3a7291aa4041fdb676aa0a47af3d193d9d97fc819d970483fe
-expect_hash userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service 33fb8e29c1ebe0e8185fa9b928e5125748bb0d984b31b2615c6372b221dd9e2d
+expect_hash userspace/root/usr/comma/bluetooth-radio 91297c1646f175aac0550abae8dd3893b749289882c052a99289effa3122184a
+expect_hash userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service 26c966c34f25c7564d78dd62859ff04b1efe63861f0875d927d72565771aea86
 # China-build setup zipapp: patched mici setup (gh-proxy downloads, zh-CHS
 # default) - rebuild with scripts/build_carrot_setup.py, then update this pin.
-expect_hash userspace/root/usr/comma/setup 77d056bf755f3295afb53f46b7c5112951aa760227f30f72dc5f24962e0cf419
+expect_hash userspace/root/usr/comma/setup 159ec7fad365e923489adf3c3efbdc5098d08e2d36f7a4a00a998200ec530313
 expect_hash userspace/root/etc/gitconfig 1ae5d95cfa104917f33ab249b47b8091ee76b9d646c14380f58d454def42bd11
 
 SERVICE=userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service
