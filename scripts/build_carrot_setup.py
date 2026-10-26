@@ -9,7 +9,9 @@ Inputs (all paths relative to the sunnypilot checkout, override with SP_OPENPILO
   - selfdrive/assets/fonts/NotoSansCJKsc-Regular.otf (CJK fallback font)
 
 The zipapp is rewritten in place: every entry is preserved byte-for-byte
-except the four above. Run from the agnos-builder repo root:
+except the six below (both setup variants are patched — mici runs on the
+small screen, tici_setup on tici/tizi big screens via setup.py dispatch).
+Run from the agnos-builder repo root:
 
   python3 scripts/build_carrot_setup.py
 """
@@ -21,14 +23,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SETUP_PATH = REPO_ROOT / "userspace" / "root" / "usr" / "comma" / "setup"
-PATCHED_SETUP = REPO_ROOT / "scripts" / "carrot_mici_setup.py"
+PATCHED_APPS = {
+  "openpilot/system/ui/mici_setup.py": REPO_ROOT / "scripts" / "carrot_mici_setup.py",
+  "openpilot/system/ui/tici_setup.py": REPO_ROOT / "scripts" / "carrot_tici_setup.py",
+}
 SP_OPENPILOT = Path(os.environ.get("SP_OPENPILOT", "E:/sp/openpilot"))
 
 TRANSLATIONS_ZIP = "openpilot/selfdrive/ui/translations"
 LANG_ENTRY = f"{TRANSLATIONS_ZIP}/app_zh-CHS.po"
 LANGS_JSON_ENTRY = f"{TRANSLATIONS_ZIP}/languages.json"
 FONT_ENTRY = "openpilot/selfdrive/assets/fonts/NotoSansCJKsc-Regular.otf"
-MIICI_ENTRY = "openpilot/system/ui/mici_setup.py"
 
 # Carrot-specific strings not present in the sunnypilot po file.
 EXTRA_TRANSLATIONS: dict[str, str] = {
@@ -88,7 +92,11 @@ def main() -> int:
     print(f"sunnypilot checkout not found: {SP_OPENPILOT} (set SP_OPENPILOT)", file=sys.stderr)
     return 1
 
-  patched_src = PATCHED_SETUP.read_text(encoding="utf-8")
+  patched_srcs = {}
+  for entry, path in PATCHED_APPS.items():
+    # Normalize to LF: the CI checkout is LF and the hash pins are computed
+    # from the injected content, so CRLF working-tree files would diverge.
+    patched_srcs[entry] = path.read_text(encoding="utf-8").replace("\r\n", "\n")
   sp_po = (SP_OPENPILOT / "selfdrive/ui/translations/app_zh-CHS.po").read_text(encoding="utf-8")
   langs_json = (SP_OPENPILOT / "selfdrive/ui/translations/languages.json").read_text(encoding="utf-8")
   font_path = SP_OPENPILOT / "selfdrive/assets/fonts/NotoSansCJKsc-Regular.otf"
@@ -99,12 +107,13 @@ def main() -> int:
   translations = po_translations(sp_po)
   translations.update(EXTRA_TRANSLATIONS)
 
-  # Coverage check: every tr() literal in the patched app must translate.
+  # Coverage check: every tr() literal in the patched apps must translate.
   # Manual unescape (unicode_escape would mangle non-ASCII like "•").
   def unescape(s: str) -> str:
     return s.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
 
-  missing = sorted({m for m in TR_RE.findall(patched_src) if unescape(m) not in translations})
+  all_src = "\n".join(patched_srcs.values())
+  missing = sorted({m for m in TR_RE.findall(all_src) if unescape(m) not in translations})
   if missing:
     print("untranslated tr() strings:", file=sys.stderr)
     for m in missing:
@@ -115,7 +124,7 @@ def main() -> int:
     entries = {info.filename: zin.read(info.filename) for info in zin.infolist()}
     order = [info.filename for info in zin.infolist()]
 
-  entries[MIICI_ENTRY] = patched_src.encode("utf-8")
+  entries.update({entry: src.encode("utf-8") for entry, src in patched_srcs.items()})
   entries[LANG_ENTRY] = sp_po.encode("utf-8")
   entries[LANGS_JSON_ENTRY] = langs_json.encode("utf-8")
   entries[FONT_ENTRY] = font_path.read_bytes()
@@ -128,8 +137,9 @@ def main() -> int:
       zout.writestr(name, entries[name])
   os.replace(tmp, SETUP_PATH)
 
+  patched_names = ", ".join(p.rsplit("/", 1)[-1] for p in PATCHED_APPS)
   print(f"setup zipapp rebuilt: {SETUP_PATH}")
-  print(f"  entries: {len(order)} (was {len(order) - 1}), tr() coverage: OK")
+  print(f"  entries: {len(order)} (+{len(PATCHED_APPS) - 1} font), patched: {patched_names}, tr() coverage: OK")
   return 0
 
 
