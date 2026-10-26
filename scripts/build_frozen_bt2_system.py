@@ -13,11 +13,11 @@ import subprocess
 import urllib.request
 from datetime import datetime, timezone
 
-BASE_ASSET = 'system-375c5d22335770ac08750660bb5b29a3331c550d6a9875b35f36b88af792ea44.img.xz'
-BASE_URL = 'https://github.com/ajouatom/agnos-builder/releases/download/agnos-19.8-carrot-bt1/' + BASE_ASSET
-COMPRESSED_HASH = '077d42186def98025ffad9723774c96f45da10c87cc6fedbc58d0cf4fa65ffd4'
-SPARSE_HASH = 'a67410a888105ecce7bcc05e17cda77fd10572aa4380e9de242a7c92f3497114'
-RAW_HASH = '375c5d22335770ac08750660bb5b29a3331c550d6a9875b35f36b88af792ea44'
+BASE_ASSET = 'system-943840f0b1ccb53dd705174dbaf2cfa03b88ca07cad2ab94585d65b2bdf6453b.img.xz'
+BASE_URL = 'https://github.com/mouxangithub/agnos-builder/releases/download/agnos-20.2-carrot-bt1/' + BASE_ASSET
+COMPRESSED_HASH = '22b7923752bbf30c595eb386284e1d1d80c54ac684d11430cd6c282d32a8d4b5'
+SPARSE_HASH = '15cf165732ec30238611aaf4ac02be17252219d43df789e8e80d9e85302bbc8b'
+RAW_HASH = '943840f0b1ccb53dd705174dbaf2cfa03b88ca07cad2ab94585d65b2bdf6453b'
 
 
 def digest(path):
@@ -42,7 +42,7 @@ def main():
   assert not output.exists()
   version = os.environ['AGNOS_VERSION']
   commit = os.environ['GITHUB_SHA']
-  assert version == '19.8-carrot-bt2' and re.fullmatch('[0-9a-f]{40}', commit)
+  assert version == '20.2-carrot-bt2' and re.fullmatch('[0-9a-f]{40}', commit)
   archive, sparse, raw = [work / n for n in ['base.img.xz', 'base.sparse.img', 'system.raw.img']]
   print('Downloading immutable bt1 userspace', flush=True)
   with urllib.request.urlopen(BASE_URL, timeout=120) as response:
@@ -52,9 +52,9 @@ def main():
     copy_stream(f, sparse)
   assert digest(sparse) == SPARSE_HASH
   subprocess.run(['simg2img', str(sparse), str(raw)], check=True)
-  assert raw.stat().st_size == 4718592000 and digest(raw) == RAW_HASH
+  assert raw.stat().st_size == 2147483648 and digest(raw) == RAW_HASH
   previous = subprocess.check_output(['debugfs', '-R', 'cat /VERSION', str(raw)], text=True)
-  assert previous.strip() == '19.8-carrot-bt1'
+  assert previous.strip() == '20.2-carrot-bt1'
   (work / 'VERSION').write_text(version)
   (work / 'BUILD').write_text(commit + '\n' + datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + '\n')
   commands = work / 'debugfs.commands'

@@ -1,11 +1,12 @@
-# AGNOS 19.8 camera / Bluetooth diagnostic trial 2
+# AGNOS 20.2 camera / Bluetooth diagnostic trial 2
 
 This release is scoped to openpilot `carrot-camera-bt2`, created from current
 `carrot-wip` on 2026-09-24 at the user's request. Do not select this OS in
 `carrot-wip` until hardware results are reviewed.
 
-Base: builder f5b3f77e59f1917f95e0752630ca08050463eede (19.8-carrot-bt1),
-kernel eccd146599f2e2f159d951092642689bede91632. Existing BT, USB-PD,
+Base: builder commit carrying the `agnos-20.2-carrot-bt1` release (20.2
+userspace, re-frozen from the original 19.8-carrot-bt1 base on 2026-10-26),
+kernel 4278172f21ed564c22bf4eccc73d4eebd3c339cc. Existing BT, USB-PD,
 C3 PCIe patches, GPU firmware, radio startup and scheduling are retained.
 
 To avoid changes from unpinned apt repositories, the system image is derived

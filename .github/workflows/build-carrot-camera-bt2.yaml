@@ -122,7 +122,7 @@ jobs:
           printf 'agnos_version=%s\n' "$AGNOS_VERSION" >> output/carrot-ota/PROVENANCE
           printf 'openpilot_manifest_commit=%s\n' "$OPENPILOT_MANIFEST_COMMIT" >> output/carrot-ota/PROVENANCE
           printf 'system_base_release=%s\n' 'agnos-20.2-carrot-bt1' >> output/carrot-ota/PROVENANCE
-          printf 'system_base_raw_sha256=%s\n' '375c5d22335770ac08750660bb5b29a3331c550d6a9875b35f36b88af792ea44' >> output/carrot-ota/PROVENANCE
+          printf 'system_base_raw_sha256=%s\n' '943840f0b1ccb53dd705174dbaf2cfa03b88ca07cad2ab94585d65b2bdf6453b' >> output/carrot-ota/PROVENANCE
           (cd output/carrot-ota && sha256sum PROVENANCE >> SHA256SUMS)
           cp patches/CAMERA_BT2.md output/carrot-ota/BLUETOOTH.md
           (cd output/carrot-ota && sha256sum BLUETOOTH.md >> SHA256SUMS)
@@ -146,6 +146,6 @@ jobs:
               --target "$GITHUB_SHA" \
               --prerelease \
               --title 'Carrot AGNOS 20.2 camera BT2 trial (frozen bt1 userspace)' \
-              --notes 'Experimental camera investigation branch only. Derived from the frozen AGNOS 20.2-carrot-bt1 userspace image (NOT 20.2) with Qualcomm diagnostic ACL routing corrected; Bluetooth functionality and existing camera scheduling are preserved. This is not a confirmed camera-gap fix. C3 and C4 hardware validation are separate.'
+              --notes 'Experimental camera investigation branch only. Derived from the frozen AGNOS 20.2-carrot-bt1 userspace image with Qualcomm diagnostic ACL routing corrected; Bluetooth functionality and existing camera scheduling are preserved. This is not a confirmed camera-gap fix. C3 and C4 hardware validation are separate.'
           fi
           gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber
