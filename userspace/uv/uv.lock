@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12.3, <3.13"
 
 [[package]]
@@ -15,12 +15,14 @@ dependencies = [
     { name = "libusb1" },
     { name = "matplotlib" },
     { name = "msgq" },
+    { name = "nanobind" },
     { name = "opendbc" },
     { name = "openpilot", extra = ["submodules", "testing", "tools"] },
     { name = "pandacan" },
     { name = "paramiko" },
     { name = "py-spy" },
     { name = "pycapnp" },
+    { name = "pyserial" },
     { name = "pyusb" },
     { name = "rednose" },
     { name = "smbus2" },
@@ -40,6 +42,7 @@ requires-dist = [
     { name = "libusb1", specifier = "==3.1.0" },
     { name = "matplotlib" },
     { name = "msgq", git = "https://github.com/commaai/msgq.git?rev=master" },
+    { name = "nanobind" },
     { name = "opendbc", git = "https://github.com/commaai/opendbc.git?rev=master" },
     { name = "openpilot", directory = "openpilot" },
     { name = "openpilot", extras = ["tools", "testing", "submodules"], directory = "openpilot" },
@@ -47,6 +50,7 @@ requires-dist = [
     { name = "paramiko" },
     { name = "py-spy" },
     { name = "pycapnp", specifier = "==2.1.0" },
+    { name = "pyserial" },
     { name = "pyusb" },
     { name = "rednose", git = "https://github.com/commaai/rednose.git?rev=master" },
     { name = "smbus2" },
@@ -700,6 +704,15 @@ version = "0.0.1"
 source = { git = "https://github.com/commaai/msgq.git?rev=master#425b61a60358895b894e9a6920b1d3e06903132e" }
 
 [[package]]
+name = "nanobind"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/1f/e28fae715401e8f57400e72aeaff4fde12046d31828164f34f61f0816da8/nanobind-3.1.0.tar.gz", hash = "sha256:6661e3dc1434d78781ccf7913442d90361dab395c3424efadb63bbb6ddea7ea3", size = 1145390, upload-time = "2026-09-18T15:59:42.726Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/c1/6fd56f7a02a478d54a1a3e6000eccd34b446b1c45cbf0d002fe5d2937126/nanobind-3.1.0-py3-none-any.whl", hash = "sha256:96984dbe8154ffb86e653b1b60aaeed6985c710c5e75ad0279eb87943c66292d", size = 316917, upload-time = "2026-09-18T15:59:37.796Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1065,6 +1078,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf81c5f53cf703ba0957b23ab84c264080fb5a450416f/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc", size = 6851574, upload-time = "2026-01-21T03:57:59.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
+]
+
+[[package]]
+name = "pyserial"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
 ]
 
 [[package]]
