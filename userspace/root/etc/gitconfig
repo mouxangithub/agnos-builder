@@ -1,0 +1,11 @@
+# Carrot China build: rewrite all GitHub git traffic through gh-proxy.com so
+# the installer's "git clone --depth=1" works from mainland China (direct
+# github.com connections hang for minutes under the GFW, which is what made
+# the install screen appear stuck).
+#
+# This also covers openpilot's updater (git fetch) after installation.
+# If the device leaves China or the mirror misbehaves, delete this file:
+#   sudo rm /etc/gitconfig
+
+[url "https://gh-proxy.com/https://github.com/"]
+	insteadOf = https://github.com/

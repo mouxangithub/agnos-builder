@@ -57,6 +57,10 @@ expect_hash userspace/root/usr/lib/firmware/amdgpu/sdma_7_0_0.bin.zst 68add1d081
 expect_hash userspace/root/usr/lib/firmware/amdgpu/smu_14_0_2.bin.zst b0a03edf1c7e5a171fafe0710165b6ce90540450d1cf00132d8f0033b6ad2099
 expect_hash userspace/root/usr/comma/bluetooth-radio 9f3902324c5a9a3a7291aa4041fdb676aa0a47af3d193d9d97fc819d970483fe
 expect_hash userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service 33fb8e29c1ebe0e8185fa9b928e5125748bb0d984b31b2615c6372b221dd9e2d
+# China-build setup zipapp: patched mici setup (gh-proxy downloads, zh-CHS
+# default) - rebuild with scripts/build_carrot_setup.py, then update this pin.
+expect_hash userspace/root/usr/comma/setup 77d056bf755f3295afb53f46b7c5112951aa760227f30f72dc5f24962e0cf419
+expect_hash userspace/root/etc/gitconfig 1ae5d95cfa104917f33ab249b47b8091ee76b9d646c14380f58d454def42bd11
 
 SERVICE=userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service
 expect_line "$SERVICE" "ExecCondition=/usr/bin/test -f /data/bluetooth/ENABLED"
@@ -71,6 +75,10 @@ expect_line "$RADIO" '  fd = os.open("/dev/ttyHS1", os.O_RDWR | os.O_NOCTTY)'
 expect_line "$RADIO" "    bluetoothctl power on >/dev/null 2>&1 && break"
 
 expect_line userspace/services.sh "systemctl enable carrot-bluetooth-radio.service"
+
+GITCONFIG=userspace/root/etc/gitconfig
+expect_line "$GITCONFIG" '[url "https://gh-proxy.com/https://github.com/"]'
+expect_line "$GITCONFIG" '	insteadOf = https://github.com/'
 
 version="$(tr -d '[:space:]' < "$DIR/VERSION")"
 case "$version" in
