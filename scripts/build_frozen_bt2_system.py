@@ -57,13 +57,26 @@ def main():
   assert previous.strip() == '20.2-carrot-bt1'
   (work / 'VERSION').write_text(version)
   (work / 'BUILD').write_text(commit + '\n' + datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + '\n')
+  # The bt1 image shipped the bluetooth-radio helper without its execute bit
+  # (systemd then fails the unit with 203/EXEC and bluetooth never comes up)
+  # and without the /lib/firmware/qca mount point the same helper's prepare
+  # step needs for the bluetooth partition's firmware bind-mount. Both slipped
+  # through bt1's hand-built rootfs; fix them here so every image derived from
+  # it boots bluetooth. A directory write through debugfs lands on the ext4
+  # inode tree, so it survives the read-only remount and every later boot.
   commands = work / 'debugfs.commands'
   commands.write_text('rm /VERSION\nwrite ' + str(work / 'VERSION') + ' /VERSION\n'
-                      'rm /BUILD\nwrite ' + str(work / 'BUILD') + ' /BUILD\n')
+                      'rm /BUILD\nwrite ' + str(work / 'BUILD') + ' /BUILD\n'
+                      'sif /usr/comma/bluetooth-radio mode 0100755\n'
+                      'mkdir /lib/firmware/qca\n')
   subprocess.run(['debugfs', '-w', '-f', str(commands), str(raw)], check=True)
   for name in ['VERSION', 'BUILD']:
     actual = subprocess.check_output(['debugfs', '-R', 'cat /' + name, str(raw)])
     assert actual == (work / name).read_bytes(), name
+  radio_stat = subprocess.check_output(['debugfs', '-R', 'stat /usr/comma/bluetooth-radio', str(raw)], text=True)
+  assert '(0100755)' in radio_stat, 'bluetooth-radio execute bit not applied'
+  firmware_ls = subprocess.check_output(['debugfs', '-R', 'ls -l /lib/firmware', str(raw)], text=True)
+  assert re.search(r'\bqca\b', firmware_ls), '/lib/firmware/qca mount point not created'
   subprocess.run(['e2fsck', '-fn', str(raw)], check=True)
   output.parent.mkdir(exist_ok=True)
   subprocess.run(['img2simg', str(raw), str(output)], check=True)
