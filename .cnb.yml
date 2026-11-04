@@ -87,17 +87,40 @@ master:
         - name: prepare kernel submodule
           script: |
             set -e
-            # CNB 仓库里相对路径 submodule 会解析到 cnb.cool，改走 gh-proxy 拉 GitHub 源
-            git config submodule.agnos-kernel-sdm845.url \
-              https://gh-proxy.com/https://github.com/commaai/agnos-kernel-sdm845.git
+            # CNB 仓库里相对路径 submodule 会解析到 cnb.cool，无法用 submodule update。
+            # 直接按 pinned commit 浅 fetch GitHub 源（GitHub 支持按 SHA fetch）。
+            # --progress 让传输进度持续输出，避免触发平台默认 10 分钟无输出超时。
             want="$(git ls-tree HEAD agnos-kernel-sdm845 | awk '{print $3}')"
-            have="$(git -C agnos-kernel-sdm845 rev-parse HEAD 2>/dev/null || true)"
-            if [ "$have" != "$want" ]; then
-              echo "kernel submodule missing/stale (have=$have want=$want), fetching"
-              rm -rf agnos-kernel-sdm845
-              git submodule update --init --depth 1 agnos-kernel-sdm845
-            else
+            have=""
+            # 注意：目录存在但没有 .git 时，rev-parse 会向上解析到工作区仓库自己的 HEAD，
+            # 必须先检查 .git 再取值
+            if [ -e agnos-kernel-sdm845/.git ]; then
+              have="$(git -C agnos-kernel-sdm845 rev-parse HEAD 2>/dev/null || true)"
+            fi
+            if [ "$have" = "$want" ]; then
               echo "kernel submodule cached at $want"
+            else
+              echo "kernel submodule missing/stale (have=${have:-none} want=$want), fetching"
+              rm -rf agnos-kernel-sdm845
+              ok=""
+              for url in \
+                "https://gh-proxy.com/https://github.com/commaai/agnos-kernel-sdm845.git" \
+                "https://ghfast.top/https://github.com/commaai/agnos-kernel-sdm845.git" \
+                "https://github.com/commaai/agnos-kernel-sdm845.git"; do
+                echo "=== trying kernel fetch from $url ==="
+                if git init -q agnos-kernel-sdm845 \
+                  && git -C agnos-kernel-sdm845 remote add origin "$url" \
+                  && git -C agnos-kernel-sdm845 fetch --depth 1 --progress origin "$want" \
+                  && git -C agnos-kernel-sdm845 checkout -q --force FETCH_HEAD \
+                  && [ "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" = "$want" ]; then
+                  echo "kernel fetched at $want"
+                  ok=1
+                  break
+                fi
+                echo "=== fetch failed from $url, trying next mirror ==="
+                rm -rf agnos-kernel-sdm845
+              done
+              [ -n "$ok" ] || { echo "all kernel mirrors failed"; exit 1; }
             fi
             # tools/extract_tools.sh 会按需 git lfs pull（.deb/.ko/字体等）
 
