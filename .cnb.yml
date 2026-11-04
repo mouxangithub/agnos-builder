@@ -171,17 +171,11 @@ master:
         - name: build common system image
           script: |
             set -e
-            set -o pipefail
             echo "=== disk before system build ==="
             df -h / || true
-            # 输出 tee 到文件，失败时打印尾部（服务端对长日志有截断，尾部最可靠）
-            GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh 2>&1 | tee /tmp/system-build.log || {
-              echo "=== build_system.sh failed, log tail ==="
-              tail -c 4000 /tmp/system-build.log || true
-              echo "=== disk at failure ==="
-              df -h / || true
-              exit 1
-            }
+            # 注意：CNB stage 脚本用 dash(sh) 执行，不支持 pipefail/PIPESTATUS，
+            # 不要在这里用管道 tee；完整日志可通过 runner log API 拉取
+            GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh
             echo "=== disk after system build ==="
             df -h / || true
 
