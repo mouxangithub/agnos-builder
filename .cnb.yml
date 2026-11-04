@@ -39,9 +39,8 @@ master:
             set -e
             # 容器内无 TERM，tzdata 默认进交互配置会 dpkg 报错并连锁拖垮 python3
             export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
-            echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections
-            echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections
-            ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime || true
+            echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections || true
+            echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections || true
             # 换腾讯云内网镜像源，加速 apt
             if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
               sed -i 's|archive.ubuntu.com|mirrors.cloud.tencent.com|g; s|security.ubuntu.com|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/ubuntu.sources
@@ -51,9 +50,24 @@ master:
             apt-get update
             # docker.io 提供 docker CLI（守护进程由 CNB docker service 提供）
             # docker-buildx 供 build_system.sh 的 `docker buildx build` 使用
+            # 先装不依赖 python3/tzdata 的基础包，失败即打印尾部日志
             apt-get install -y --no-install-recommends \
-              git git-lfs curl jq python3 xz-utils perl ca-certificates \
-              docker.io docker-buildx
+              git git-lfs curl jq xz-utils perl ca-certificates \
+              docker.io docker-buildx > /tmp/apt-base.log 2>&1 || {
+                echo "=== base apt failed, tail ==="
+                tail -c 3000 /tmp/apt-base.log
+                exit 1
+              }
+            # python3 单独安装（依赖 tzdata，历史上在这里配置失败）
+            apt-get install -y --no-install-recommends python3 > /tmp/apt-py.log 2>&1 || {
+                echo "=== python3 apt failed, tzdata/python configure sections ==="
+                grep -n -B2 -A25 'Setting up tzdata\|Processing triggers for tzdata\|dpkg: error processing' /tmp/apt-py.log | head -150 || true
+                echo "=== python3 apt failed, log tail ==="
+                tail -c 2000 /tmp/apt-py.log
+                echo "=== retry: configure tzdata directly ==="
+                dpkg --configure tzdata 2>&1 | tail -40 || true
+                exit 1
+              }
             git lfs install
 
         - name: verify docker-in-docker
