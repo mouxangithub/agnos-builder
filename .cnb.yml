@@ -30,6 +30,8 @@ master:
         CNB_REPO: mouxancnb/agnos-builder
         # 仅用于 PROVENANCE 留痕；manifest 快照已 vendor 进仓库
         OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+        # CNB dind 存储配额小：rootfs 在 docker 里构建，镜像组装移到宿主侧
+        SPLIT_IMAGE_BUILD: "1"
       volumes:
         - .ccache:copy-on-write
         - agnos-kernel-sdm845:copy-on-write
@@ -50,9 +52,11 @@ master:
             apt-get update
             # docker.io 提供 docker CLI（守护进程由 CNB docker service 提供）
             # docker-buildx 供 build_system.sh 的 `docker buildx build` 使用
+            # e2fsprogs/img2simg/setcap 供 SPLIT_IMAGE_BUILD 宿主侧组装 system 镜像
             # 先装不依赖 python3/tzdata 的基础包，失败即打印尾部日志
             apt-get install -y --no-install-recommends \
               git git-lfs curl jq xz-utils perl ca-certificates \
+              e2fsprogs libcap2-bin android-sdk-libsparse-utils \
               docker.io docker-buildx > /tmp/apt-base.log 2>&1 || {
                 echo "=== base apt failed, tail ==="
                 tail -c 3000 /tmp/apt-base.log
@@ -255,6 +259,7 @@ master:
       env:
         CNB_REPO: mouxancnb/agnos-builder
         OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+        SPLIT_IMAGE_BUILD: "1"
       volumes:
         - .ccache:copy-on-write
         - agnos-kernel-sdm845:copy-on-write
