@@ -52,20 +52,23 @@ master:
             apt-get update
             # docker.io 提供 docker CLI（守护进程由 CNB docker service 提供）
             # docker-buildx 供 build_system.sh 的 `docker buildx build` 使用
-            # e2fsprogs/img2simg/setcap 供 SPLIT_IMAGE_BUILD 宿主侧组装 system 镜像
+            # e2fsprogs/libcap2-bin 供 SPLIT_IMAGE_BUILD 宿主侧组装 system 镜像
+            # （android-sdk-libsparse-utils 依赖 python3/tzdata，放到下一步装）
             # 先装不依赖 python3/tzdata 的基础包，失败即打印尾部日志
             apt-get install -y --no-install-recommends \
               git git-lfs curl jq xz-utils perl ca-certificates \
-              e2fsprogs libcap2-bin android-sdk-libsparse-utils \
+              e2fsprogs libcap2-bin \
               docker.io docker-buildx > /tmp/apt-base.log 2>&1 || {
                 echo "=== base apt failed, tail ==="
                 tail -c 3000 /tmp/apt-base.log
                 exit 1
               }
-            # python3 单独安装。CNB 任务容器把 /etc/localtime bind-mount 进来，
-            # tzdata postinst `mv /etc/localtime.dpkg-new /etc/localtime` 会报
+            # python3 单独安装（android-sdk-libsparse-utils 也依赖它）。
+            # CNB 任务容器把 /etc/localtime bind-mount 进来，tzdata postinst
+            # `mv /etc/localtime.dpkg-new /etc/localtime` 会报
             # "Device or resource busy"。失败时把 postinst 换成 no-op 再补配置。
-            apt-get install -y --no-install-recommends python3 > /tmp/apt-py.log 2>&1 || {
+            apt-get install -y --no-install-recommends \
+              python3 android-sdk-libsparse-utils > /tmp/apt-py.log 2>&1 || {
                 echo "=== python3 apt failed, applying /etc/localtime bind-mount workaround ==="
                 tail -c 1200 /tmp/apt-py.log || true
                 printf '#!/bin/sh\nexit 0\n' > /var/lib/dpkg/info/tzdata.postinst
