@@ -1,0 +1,98 @@
+diff --git a/arch/arm64/boot/dts/qcom/sdm845.dtsi b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+index afc4b75..2dceab5 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+@@ -659,7 +659,8 @@
+                         compatible = "ramoops";
+                         reg = <0 0xb0000000 0 0x003ff000>;
+                         record-size = <0x40000>; /*256x1024*/
+-                        console-size = <0x40000>;
++                        /* Keep enough early boot/USB diagnostics for post-reset analysis. */
++                        console-size = <0x100000>;
+                         ftrace-size = <0x40000>;
+                         pmsg-size = <0x200000>;
+                         ecc-size = <0x0>;
+diff --git a/drivers/usb/pd/policy_engine.c b/drivers/usb/pd/policy_engine.c
+index 6685f05..5b69a03 100644
+--- a/drivers/usb/pd/policy_engine.c
++++ b/drivers/usb/pd/policy_engine.c
+@@ -501,16 +501,22 @@ static inline void start_usb_host(struct usbpd *pd, bool ss)
+ {
+ 	enum plug_orientation cc = usbpd_get_plug_orientation(pd);
+ 	union extcon_property_value val;
++	int polarity_ret;
++	int ss_ret;
++	int state_ret;
+ 
+ 	val.intval = (cc == ORIENTATION_CC2);
+-	extcon_set_property(pd->extcon, EXTCON_USB_HOST,
++	polarity_ret = extcon_set_property(pd->extcon, EXTCON_USB_HOST,
+ 			EXTCON_PROP_USB_TYPEC_POLARITY, val);
+ 
+ 	val.intval = ss;
+-	extcon_set_property(pd->extcon, EXTCON_USB_HOST,
++	ss_ret = extcon_set_property(pd->extcon, EXTCON_USB_HOST,
+ 			EXTCON_PROP_USB_SS, val);
+ 
+-	extcon_set_state_sync(pd->extcon, EXTCON_USB_HOST, 1);
++	state_ret = extcon_set_state_sync(pd->extcon, EXTCON_USB_HOST, 1);
++	usbpd_info(&pd->dev,
++			"USB host start: orientation=%d ss=%d polarity_ret=%d ss_ret=%d state_ret=%d\n",
++			cc, ss, polarity_ret, ss_ret, state_ret);
+ }
+ 
+ static inline void stop_usb_peripheral(struct usbpd *pd)
+@@ -1105,7 +1111,7 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
+ 	if (pd->hard_reset_recvd) /* let usbpd_sm handle it */
+ 		return;
+ 
+-	usbpd_dbg(&pd->dev, "%s -> %s\n",
++	usbpd_info(&pd->dev, "%s -> %s\n",
+ 			usbpd_state_strings[pd->current_state],
+ 			usbpd_state_strings[next_state]);
+ 
+@@ -1196,11 +1202,25 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
+ 		break;
+ 
+ 	case PE_SRC_NEGOTIATE_CAPABILITY:
++		usbpd_info(&pd->dev,
++			"Source request: rdo=%08x pos=%u operating=%umA maximum=%umA mismatch=%u\n",
++			pd->rdo, PD_RDO_OBJ_POS(pd->rdo),
++			PD_RDO_FIXED_CURR(pd->rdo) * 10,
++			PD_RDO_FIXED_CURR_MINMAX(pd->rdo) * 10,
++			PD_RDO_MISMATCH(pd->rdo));
++
++		/*
++		 * A sink that cannot be fully satisfied may set Capability Mismatch
++		 * and report its desired maximum current above the selected source
++		 * PDO.  Accept that standards-compliant request as long as the actual
++		 * operating current stays within our advertised 1.5 A limit.
++		 */
+ 		if (PD_RDO_OBJ_POS(pd->rdo) != 1 ||
+ 			PD_RDO_FIXED_CURR(pd->rdo) >
+ 				PD_SRC_PDO_FIXED_MAX_CURR(*default_src_caps) ||
+-			PD_RDO_FIXED_CURR_MINMAX(pd->rdo) >
+-				PD_SRC_PDO_FIXED_MAX_CURR(*default_src_caps)) {
++			(PD_RDO_FIXED_CURR_MINMAX(pd->rdo) >
++				PD_SRC_PDO_FIXED_MAX_CURR(*default_src_caps) &&
++			 !PD_RDO_MISMATCH(pd->rdo))) {
+ 			/* send Reject */
+ 			ret = pd_send_msg(pd, MSG_REJECT, NULL, 0, SOP_MSG);
+ 			if (ret) {
+@@ -1230,6 +1250,7 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
+ 			usbpd_set_state(pd, PE_SRC_SEND_SOFT_RESET);
+ 			break;
+ 		}
++		usbpd_info(&pd->dev, "Accepted source request: %08x\n", pd->rdo);
+ 
+ 		/* tSrcTransition required after ACCEPT */
+ 		usleep_range(SRC_TRANSITION_TIME * USEC_PER_MSEC,
+@@ -2975,7 +2996,7 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
+ 
+ 	pd->typec_mode = typec_mode;
+ 
+-	usbpd_dbg(&pd->dev, "typec mode:%d present:%d type:%d orientation:%d\n",
++	usbpd_info(&pd->dev, "typec mode:%d present:%d type:%d orientation:%d\n",
+ 			typec_mode, pd->vbus_present, pd->psy_type,
+ 			usbpd_get_plug_orientation(pd));
+ 

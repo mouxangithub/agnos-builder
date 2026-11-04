@@ -1,0 +1,123 @@
+#!/bin/bash -e
+
+# Adapted from firestar5683/agnos-builder 75f04905701f905bf43e60cbf4cfb713039e3f0d.
+FIRMWARE_MOUNT=/run/carrot-bluetooth-firmware
+FIRMWARE_BIND=/lib/firmware/qca
+BLUETOOTH_STATE=/data/bluetooth
+BLUETOOTH_BIND=/var/lib/bluetooth
+
+power() {
+  /usr/bin/python3 - "$1" <<'PY'
+import fcntl
+import os
+import sys
+
+fd = os.open("/dev/btpower", os.O_RDWR)
+try:
+  fcntl.ioctl(fd, 0xBFAD, int(sys.argv[1]))
+finally:
+  os.close(fd)
+PY
+}
+
+pulse() {
+  /usr/bin/python3 <<'PY'
+import fcntl
+import os
+import struct
+import termios
+import time
+
+def send(speed, value):
+  fd = os.open("/dev/ttyHS1", os.O_RDWR | os.O_NOCTTY)
+  try:
+    attrs = termios.tcgetattr(fd)
+    attrs[0] = 0
+    attrs[1] = 0
+    attrs[2] = (attrs[2] & ~(termios.CSIZE | termios.PARENB | termios.CSTOPB | termios.CRTSCTS)) | termios.CS8 | termios.CREAD | termios.CLOCAL
+    attrs[3] = 0
+    attrs[4] = speed
+    attrs[5] = speed
+    attrs[6][termios.VMIN] = 0
+    attrs[6][termios.VTIME] = 1
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    mask = struct.pack("I", termios.TIOCM_RTS)
+    fcntl.ioctl(fd, termios.TIOCMBIC, mask)
+    os.write(fd, bytes([value]))
+    termios.tcdrain(fd)
+    fcntl.ioctl(fd, termios.TIOCMBIS, mask)
+  finally:
+    os.close(fd)
+
+send(termios.B2400, 0xC0)
+time.sleep(0.001)
+send(termios.B115200, 0xFC)
+time.sleep(0.1)
+PY
+}
+
+prepare() {
+  model="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
+  [[ "$model" == *tici* || "$model" == *tizi* || "$model" == *mici* ]]
+
+  slot="$(sed -n 's/.*androidboot.slot_suffix=\([^ ]*\).*/\1/p' /proc/cmdline)"
+  device="/dev/disk/by-partlabel/bluetooth${slot}"
+  [[ "$slot" == _a || "$slot" == _b ]]
+  [[ -b "$device" ]]
+
+  mkdir -p "$FIRMWARE_MOUNT" "$FIRMWARE_BIND" "$BLUETOOTH_STATE" "$BLUETOOTH_BIND"
+  chmod 700 "$BLUETOOTH_STATE"
+  mountpoint -q "$FIRMWARE_MOUNT" || mount -o ro,nosuid,nodev,noexec "$device" "$FIRMWARE_MOUNT"
+  mountpoint -q "$FIRMWARE_BIND" || mount --bind "$FIRMWARE_MOUNT/image" "$FIRMWARE_BIND"
+  mount -o remount,bind,ro,nosuid,nodev,noexec "$FIRMWARE_BIND"
+  mountpoint -q "$BLUETOOTH_BIND" || mount --bind "$BLUETOOTH_STATE" "$BLUETOOTH_BIND"
+  power 0 || true
+  sleep 2
+  power 1
+  sleep 3
+  pulse
+  rfkill unblock bluetooth
+}
+
+ready() {
+  for _ in $(seq 1 200); do
+    [[ -e /sys/class/bluetooth/hci0 ]] && break
+    sleep 0.1
+  done
+  [[ -e /sys/class/bluetooth/hci0 ]]
+
+  systemctl start bluetooth.service
+  for _ in $(seq 1 100); do
+    busctl --system status org.bluez >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  for _ in $(seq 1 20); do
+    bluetoothctl power on >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+  info="$(hciconfig -a hci0)"
+  grep -q "UP RUNNING" <<<"$info"
+  grep -q "BD Address:" <<<"$info"
+  ! grep -q "BD Address: 00:00:00:00:00:00" <<<"$info"
+
+}
+
+stop() {
+  systemctl stop bluetooth.service || true
+}
+
+cleanup() {
+  rfkill block bluetooth || true
+  power 0 || true
+  mountpoint -q "$BLUETOOTH_BIND" && umount "$BLUETOOTH_BIND" || true
+  mountpoint -q "$FIRMWARE_BIND" && umount "$FIRMWARE_BIND" || true
+  mountpoint -q "$FIRMWARE_MOUNT" && umount "$FIRMWARE_MOUNT" || true
+}
+
+case "${1:-}" in
+  prepare) prepare ;;
+  ready) ready ;;
+  stop) stop ;;
+  cleanup) cleanup ;;
+  *) exit 2 ;;
+esac

@@ -1,0 +1,536 @@
+diff --git a/arch/arm64/boot/dts/qcom/comma_common.dtsi b/arch/arm64/boot/dts/qcom/comma_common.dtsi
+--- a/arch/arm64/boot/dts/qcom/comma_common.dtsi
++++ b/arch/arm64/boot/dts/qcom/comma_common.dtsi
+@@ -98,6 +98,11 @@
+   status = "ok";
+ };
+ 
++/* Bluetooth UART */
++&qupv3_se6_4uart {
++  status = "ok";
++};
++
+ /* regulators */
+ 
+ // IMU regulators
+diff --git a/arch/arm64/boot/dts/qcom/sdm845.dtsi b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+--- a/arch/arm64/boot/dts/qcom/sdm845.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+@@ -48,7 +48,8 @@
+ 		i2c0 = &qupv3_se10_i2c;
+ 		i2c1 = &qupv3_se4_i2c;
+ 		i2c2 = &qupv3_se5_i2c;
+-		hsuart0 = &qupv3_se6_4uart;
++		hsuart0 = &qupv3_gps_uart;
++		hsuart1 = &qupv3_se6_4uart;
+ 	};
+ 
+ 	cpus {
+diff --git a/arch/arm64/configs/tici_defconfig b/arch/arm64/configs/tici_defconfig
+--- a/arch/arm64/configs/tici_defconfig
++++ b/arch/arm64/configs/tici_defconfig
+@@ -1149,13 +1149,13 @@ CONFIG_CAN_MCP25XXFD=y
+ # CONFIG_CAN_8DEV_USB is not set
+ # CONFIG_CAN_DEBUG_DEVICES is not set
+ # CONFIG_IRDA is not set
+-CONFIG_BT=n
+-CONFIG_BT_BREDR=n
+-# CONFIG_BT_RFCOMM is not set
++CONFIG_BT=y
++CONFIG_BT_BREDR=y
++CONFIG_BT_RFCOMM=y
+ # CONFIG_BT_BNEP is not set
+-# CONFIG_BT_HIDP is not set
++CONFIG_BT_HIDP=y
+ CONFIG_BT_HS=n
+-CONFIG_BT_LE=n
++CONFIG_BT_LE=y
+ # CONFIG_BT_LEDS is not set
+ # CONFIG_BT_SELFTEST is not set
+ CONFIG_BT_DEBUGFS=n
+@@ -1165,14 +1165,16 @@ CONFIG_BT_DEBUGFS=n
+ #
+ # CONFIG_BT_HCIBTUSB is not set
+ # CONFIG_BT_HCIBTSDIO is not set
+-# CONFIG_BT_HCIUART is not set
++CONFIG_BT_HCIUART=y
++CONFIG_BT_HCIUART_H4=y
++CONFIG_BT_HCIUART_QCA=y
+ # CONFIG_BT_HCIBCM203X is not set
+ # CONFIG_BT_HCIBFUSB is not set
+ # CONFIG_BT_HCIVHCI is not set
+ # CONFIG_BT_MRVL is not set
+-CONFIG_MSM_BT_POWER=n
+-CONFIG_BTFM_SLIM=n
+-CONFIG_BTFM_SLIM_WCN3990=n
++CONFIG_MSM_BT_POWER=y
++CONFIG_BTFM_SLIM=y
++CONFIG_BTFM_SLIM_WCN3990=y
+ # CONFIG_AF_RXRPC is not set
+ # CONFIG_AF_KCM is not set
+ # CONFIG_STREAM_PARSER is not set
+@@ -3486,7 +3488,7 @@ CONFIG_SND_SOC_HDMI_CODEC=y
+ #
+ CONFIG_HID=y
+ # CONFIG_HID_BATTERY_STRENGTH is not set
+-# CONFIG_HIDRAW is not set
++CONFIG_HIDRAW=y
+ CONFIG_UHID=y
+ CONFIG_HID_GENERIC=y
+ 
+@@ -5480,7 +5482,7 @@ CONFIG_CRYPTO_AKCIPHER=y
+ CONFIG_CRYPTO_KPP2=y
+ CONFIG_CRYPTO_RSA=y
+ # CONFIG_CRYPTO_DH is not set
+-# CONFIG_CRYPTO_ECDH is not set
++CONFIG_CRYPTO_ECDH=y
+ CONFIG_CRYPTO_MANAGER=y
+ CONFIG_CRYPTO_MANAGER2=y
+ # CONFIG_CRYPTO_USER is not set
+@@ -5499,7 +5501,7 @@ CONFIG_CRYPTO_ABLK_HELPER=y
+ #
+ # Authenticated Encryption with Associated Data
+ #
+-# CONFIG_CRYPTO_CCM is not set
++CONFIG_CRYPTO_CCM=y
+ CONFIG_CRYPTO_GCM=y
+ # CONFIG_CRYPTO_CHACHA20POLY1305 is not set
+ CONFIG_CRYPTO_SEQIV=y
+diff --git a/drivers/bluetooth/btqca.c b/drivers/bluetooth/btqca.c
+--- a/drivers/bluetooth/btqca.c
++++ b/drivers/bluetooth/btqca.c
+@@ -27,9 +27,6 @@
+ 
+ #define VERSION "0.1"
+ 
+-#define MAX_PATCH_FILE_SIZE (100*1024)
+-#define MAX_NVM_FILE_SIZE   (10*1024)
+-
+ static int rome_patch_ver_req(struct hci_dev *hdev, u32 *rome_version)
+ {
+ 	struct sk_buff *skb;
+@@ -126,13 +123,25 @@ static void rome_tlv_check_data(struct rome_config *config,
+ 
+ 	type_len = le32_to_cpu(tlv->type_len);
+ 	length = (type_len >> 8) & 0x00ffffff;
++	if (config->type == TLV_TYPE_NVM && (type_len & 0xff) == 4) {
++		if (fw->size < 2 * sizeof(*tlv))
++			return;
++		tlv++;
++		type_len = le32_to_cpu(tlv->type_len);
++		length = (type_len >> 8) & 0x00ffffff;
++	}
+ 
+ 	BT_DBG("TLV Type\t\t : 0x%x", type_len & 0x000000ff);
+ 	BT_DBG("Length\t\t : %d bytes", length);
+ 
++	config->dnld_mode = ROME_SKIP_EVT_NONE;
++	config->dnld_type = ROME_SKIP_EVT_NONE;
++
+ 	switch (config->type) {
+ 	case TLV_TYPE_PATCH:
+ 		tlv_patch = (struct tlv_type_patch *)tlv->data;
++		config->dnld_mode = tlv_patch->download_mode;
++		config->dnld_type = config->dnld_mode;
+ 		BT_DBG("Total Length\t\t : %d bytes",
+ 		       le32_to_cpu(tlv_patch->total_size));
+ 		BT_DBG("Patch Data Length\t : %d bytes",
+@@ -141,8 +150,9 @@ static void rome_tlv_check_data(struct rome_config *config,
+ 		       tlv_patch->format_version);
+ 		BT_DBG("Signature Algorithm\t : 0x%x",
+ 		       tlv_patch->signature);
+-		BT_DBG("Reserved\t\t : 0x%x",
+-		       le16_to_cpu(tlv_patch->reserved1));
++		BT_DBG("Download Mode\t\t : 0x%x",
++		       tlv_patch->download_mode);
++		BT_DBG("Reserved\t\t : 0x%x", tlv_patch->reserved1);
+ 		BT_DBG("Product ID\t\t : 0x%04x",
+ 		       le16_to_cpu(tlv_patch->product_id));
+ 		BT_DBG("Rom Build Version\t : 0x%04x",
+@@ -198,7 +208,8 @@ static void rome_tlv_check_data(struct rome_config *config,
+ }
+ 
+ static int rome_tlv_send_segment(struct hci_dev *hdev, int idx, int seg_size,
+-				 const u8 *data)
++				 const u8 *data,
++				 enum rome_tlv_dnld_mode mode)
+ {
+ 	struct sk_buff *skb;
+ 	struct edl_event_hdr *edl;
+@@ -212,6 +223,10 @@ static int rome_tlv_send_segment(struct hci_dev *hdev, int idx, int seg_size,
+ 	cmd[1] = seg_size;
+ 	memcpy(cmd + 2, data, seg_size);
+ 
++	if (mode == ROME_SKIP_EVT_VSE_CC || mode == ROME_SKIP_EVT_VSE)
++		return __hci_cmd_send(hdev, EDL_PATCH_CMD_OPCODE, seg_size + 2,
++				      cmd);
++
+ 	skb = __hci_cmd_sync_ev(hdev, EDL_PATCH_CMD_OPCODE, seg_size + 2, cmd,
+ 				HCI_VENDOR_PKT, HCI_INIT_TIMEOUT);
+ 	if (IS_ERR(skb)) {
+@@ -248,38 +263,60 @@ static int rome_tlv_send_segment(struct hci_dev *hdev, int idx, int seg_size,
+ 	return err;
+ }
+ 
++static int rome_inject_cmd_complete_event(struct hci_dev *hdev)
++{
++	struct hci_event_hdr *hdr;
++	struct hci_ev_cmd_complete *evt;
++	struct sk_buff *skb;
++
++	skb = bt_skb_alloc(sizeof(*hdr) + sizeof(*evt) + 1, GFP_KERNEL);
++	if (!skb)
++		return -ENOMEM;
++
++	hdr = (struct hci_event_hdr *)skb_put(skb, sizeof(*hdr));
++	hdr->evt = HCI_EV_CMD_COMPLETE;
++	hdr->plen = sizeof(*evt) + 1;
++
++	evt = (struct hci_ev_cmd_complete *)skb_put(skb, sizeof(*evt));
++	evt->ncmd = 1;
++	evt->opcode = cpu_to_le16(QCA_HCI_CC_OPCODE);
++
++	*(u8 *)skb_put(skb, 1) = QCA_HCI_CC_SUCCESS;
++	hci_skb_pkt_type(skb) = HCI_EVENT_PKT;
++
++	return hci_recv_frame(hdev, skb);
++}
++
+ static int rome_tlv_download_request(struct hci_dev *hdev,
+-				     const struct firmware *fw)
++				     const struct firmware *fw,
++				     struct rome_config *config)
+ {
+-	const u8 *buffer, *data;
+-	int total_segment, remain_size;
+-	int ret, i;
++	const u8 *buffer;
++	int remain;
++	int ret, i = 0;
+ 
+ 	if (!fw || !fw->data)
+ 		return -EINVAL;
++	buffer = fw->data;
++	remain = fw->size;
+ 
+-	total_segment = fw->size / MAX_SIZE_PER_TLV_SEGMENT;
+-	remain_size = fw->size % MAX_SIZE_PER_TLV_SEGMENT;
++	while (remain > 0) {
++		int seg_size = min(MAX_SIZE_PER_TLV_SEGMENT, remain);
+ 
+-	BT_DBG("%s: Total segment num %d remain size %d total size %zu",
+-	       hdev->name, total_segment, remain_size, fw->size);
++		remain -= seg_size;
++		if (!remain || seg_size < MAX_SIZE_PER_TLV_SEGMENT)
++			config->dnld_mode = ROME_SKIP_EVT_NONE;
+ 
+-	data = fw->data;
+-	for (i = 0; i < total_segment; i++) {
+-		buffer = data + i * MAX_SIZE_PER_TLV_SEGMENT;
+-		ret = rome_tlv_send_segment(hdev, i, MAX_SIZE_PER_TLV_SEGMENT,
+-					    buffer);
+-		if (ret < 0)
+-			return -EIO;
++		ret = rome_tlv_send_segment(hdev, i++, seg_size, buffer,
++					    config->dnld_mode);
++		if (ret)
++			return ret;
++		buffer += seg_size;
+ 	}
+ 
+-	if (remain_size) {
+-		buffer = data + total_segment * MAX_SIZE_PER_TLV_SEGMENT;
+-		ret = rome_tlv_send_segment(hdev, total_segment, remain_size,
+-					    buffer);
+-		if (ret < 0)
+-			return -EIO;
+-	}
++	if (config->dnld_type == ROME_SKIP_EVT_VSE_CC ||
++	    config->dnld_type == ROME_SKIP_EVT_VSE)
++		return rome_inject_cmd_complete_event(hdev);
+ 
+ 	return 0;
+ }
+@@ -308,18 +345,6 @@ static int rome_download_firmware(struct hci_dev *hdev,
+ 		goto exit;
+ 	}
+ 
+-	if (config->type == TLV_TYPE_PATCH &&
+-		(fw->size > MAX_PATCH_FILE_SIZE)) {
+-		ret = -EINVAL;
+-		BT_ERR("TLV_PATCH dload: wrong patch file sizes");
+-		goto exit;
+-	} else if (config->type == TLV_TYPE_NVM &&
+-		(fw->size > MAX_NVM_FILE_SIZE)) {
+-		ret = -EINVAL;
+-		BT_ERR("TLV_NVM dload: wrong NVM file sizes");
+-		goto exit;
+-	}
+-
+ 	if (fw->size < sizeof(struct tlv_type_hdr)) {
+ 		ret = -EINVAL;
+ 		BT_ERR("Firware size smaller to fit minimum value");
+@@ -337,7 +362,7 @@ static int rome_download_firmware(struct hci_dev *hdev,
+ 	}
+ 
+ 	rome_tlv_check_data(config, fw);
+-	ret = rome_tlv_download_request(hdev, fw);
++	ret = rome_tlv_download_request(hdev, fw, config);
+ 
+ 	if (ret) {
+ 		BT_ERR("Failed to download FW: error = (%d)", ret);
+@@ -379,6 +404,7 @@ int qca_uart_setup_rome(struct hci_dev *hdev, uint8_t baudrate)
+ 	u32 rome_ver = 0;
+ 	struct rome_config config;
+ 	int err;
++	u8 fw_ver;
+ 
+ 	BT_DBG("%s: ROME setup on UART", hdev->name);
+ 
+@@ -392,21 +418,24 @@ int qca_uart_setup_rome(struct hci_dev *hdev, uint8_t baudrate)
+ 	}
+ 
+ 	BT_INFO("%s: ROME controller version 0x%08x", hdev->name, rome_ver);
++	fw_ver = ((rome_ver & 0x00000f00) >> 4) |
++		 (rome_ver & 0x0000000f);
+ 
+ 	/* Download rampatch file */
+ 	config.type = TLV_TYPE_PATCH;
+-	snprintf(config.fwname, sizeof(config.fwname), "qca/rampatch_%08x.bin",
+-		 rome_ver);
++	snprintf(config.fwname, sizeof(config.fwname), "qca/crbtfw%02x.tlv",
++		 fw_ver);
+ 	err = rome_download_firmware(hdev, &config);
+ 	if (err < 0) {
+ 		BT_ERR("%s: Failed to download patch (%d)", hdev->name, err);
+ 		return err;
+ 	}
++	msleep(10);
+ 
+ 	/* Download NVM configuration */
+ 	config.type = TLV_TYPE_NVM;
+-	snprintf(config.fwname, sizeof(config.fwname), "qca/nvm_%08x.bin",
+-		 rome_ver);
++	snprintf(config.fwname, sizeof(config.fwname), "qca/crnv%02x.bin",
++		 fw_ver);
+ 	err = rome_download_firmware(hdev, &config);
+ 	if (err < 0) {
+ 		BT_ERR("%s: Failed to download NVM (%d)", hdev->name, err);
+diff --git a/drivers/bluetooth/btqca.h b/drivers/bluetooth/btqca.h
+--- a/drivers/bluetooth/btqca.h
++++ b/drivers/bluetooth/btqca.h
+@@ -34,6 +34,9 @@
+ #define EDL_SET_BAUDRATE_RSP_EVT	(0x92)
+ #define EDL_NVM_ACCESS_CODE_EVT		(0x0B)
+ 
++#define QCA_HCI_CC_OPCODE		(0xFC00)
++#define QCA_HCI_CC_SUCCESS		(0x00)
++
+ #define EDL_TAG_ID_HCI			(17)
+ #define EDL_TAG_ID_DEEP_SLEEP		(27)
+ 
+@@ -66,10 +69,19 @@ enum rome_tlv_type {
+ 	TLV_TYPE_NVM
+ };
+ 
++enum rome_tlv_dnld_mode {
++	ROME_SKIP_EVT_NONE,
++	ROME_SKIP_EVT_VSE,
++	ROME_SKIP_EVT_CC,
++	ROME_SKIP_EVT_VSE_CC
++};
++
+ struct rome_config {
+ 	u8 type;
+ 	char fwname[64];
+ 	uint8_t user_baud_rate;
++	enum rome_tlv_dnld_mode dnld_mode;
++	enum rome_tlv_dnld_mode dnld_type;
+ };
+ 
+ struct edl_event_hdr {
+@@ -94,7 +106,8 @@ struct tlv_type_patch {
+ 	__le32 data_length;
+ 	__u8   format_version;
+ 	__u8   signature;
+-	__le16 reserved1;
++	__u8   download_mode;
++	__u8   reserved1;
+ 	__le16 product_id;
+ 	__le16 rom_build;
+ 	__le16 patch_version;
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -29,7 +29,10 @@
+  */
+ 
+ #include <linux/kernel.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
+ #include <linux/debugfs.h>
++#include <linux/tty.h>
+ 
+ #include <net/bluetooth/bluetooth.h>
+ #include <net/bluetooth/hci_core.h>
+@@ -45,10 +48,11 @@
+ 
+ /* Controller states */
+ #define STATE_IN_BAND_SLEEP_ENABLED	1
++#define STATE_DROP_VENDOR_EVENT		2
++#define HCI_EV_VENDOR			0xff
+ 
+ #define IBS_WAKE_RETRANS_TIMEOUT_MS	100
+ #define IBS_TX_IDLE_TIMEOUT_MS		2000
+-#define BAUDRATE_SETTLE_TIMEOUT_MS	300
+ 
+ /* HCI_IBS transmit side sleep protocol states */
+ enum tx_ibs_states {
+@@ -92,6 +96,7 @@ struct qca_data {
+ 	struct work_struct ws_rx_vote_off;
+ 	struct work_struct ws_tx_vote_off;
+ 	unsigned long flags;
++	struct completion drop_ev_comp;
+ 
+ 	/* For debugging purpose */
+ 	u64 ibs_sent_wacks;
+@@ -410,6 +415,7 @@ static int qca_open(struct hci_uart *hu)
+ 	INIT_WORK(&qca->ws_tx_vote_off, qca_wq_serial_tx_clock_vote_off);
+ 
+ 	qca->hu = hu;
++	init_completion(&qca->drop_ev_comp);
+ 
+ 	/* Assume we start with both sides asleep -- extra wakes OK */
+ 	qca->tx_ibs_state = HCI_IBS_TX_ASLEEP;
+@@ -763,6 +769,24 @@ static int qca_ibs_wake_ack(struct hci_dev *hdev, struct sk_buff *skb)
+ 	return 0;
+ }
+ 
++static int qca_recv_event(struct hci_dev *hdev, struct sk_buff *skb)
++{
++	struct hci_uart *hu = hci_get_drvdata(hdev);
++	struct qca_data *qca = hu->priv;
++
++	if (test_bit(STATE_DROP_VENDOR_EVENT, &qca->flags)) {
++		struct hci_event_hdr *hdr = (void *)skb->data;
++
++		if (hdr->evt == HCI_EV_VENDOR)
++			complete(&qca->drop_ev_comp);
++
++		kfree_skb(skb);
++		return 0;
++	}
++
++	return hci_recv_frame(hdev, skb);
++}
++
+ #define QCA_IBS_SLEEP_IND_EVENT \
+ 	.type = HCI_IBS_SLEEP_IND, \
+ 	.hlen = 0, \
+@@ -787,7 +811,7 @@ static int qca_ibs_wake_ack(struct hci_dev *hdev, struct sk_buff *skb)
+ static const struct h4_recv_pkt qca_recv_pkts[] = {
+ 	{ H4_RECV_ACL,             .recv = hci_recv_frame    },
+ 	{ H4_RECV_SCO,             .recv = hci_recv_frame    },
+-	{ H4_RECV_EVENT,           .recv = hci_recv_frame    },
++	{ H4_RECV_EVENT,           .recv = qca_recv_event    },
+ 	{ QCA_IBS_WAKE_IND_EVENT,  .recv = qca_ibs_wake_ind  },
+ 	{ QCA_IBS_WAKE_ACK_EVENT,  .recv = qca_ibs_wake_ack  },
+ 	{ QCA_IBS_SLEEP_IND_EVENT, .recv = qca_ibs_sleep_ind },
+@@ -865,7 +889,7 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
+ 
+ 	cmd[4] = baudrate;
+ 
+-	skb = bt_skb_alloc(sizeof(cmd), GFP_ATOMIC);
++	skb = bt_skb_alloc(sizeof(cmd), GFP_KERNEL);
+ 	if (!skb) {
+ 		BT_ERR("Failed to allocate memory for baudrate packet");
+ 		return -ENOMEM;
+@@ -878,13 +902,10 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
+ 	skb_queue_tail(&qca->txq, skb);
+ 	hci_uart_tx_wakeup(hu);
+ 
+-	/* wait 300ms to change new baudrate on controller side
+-	 * controller will come back after they receive this HCI command
+-	 * then host can communicate with new baudrate to controller
+-	 */
+-	set_current_state(TASK_UNINTERRUPTIBLE);
+-	schedule_timeout(msecs_to_jiffies(BAUDRATE_SETTLE_TIMEOUT_MS));
+-	set_current_state(TASK_INTERRUPTIBLE);
++	while (!skb_queue_empty(&qca->txq))
++		usleep_range(100, 200);
++	tty_wait_until_sent(hu->tty, msecs_to_jiffies(100));
++	msleep(10);
+ 
+ 	return 0;
+ }
+@@ -922,13 +943,25 @@ static int qca_setup(struct hci_uart *hu)
+ 		qca_baudrate = qca_get_baudrate_value(speed);
+ 
+ 		BT_INFO("%s: Set UART speed to %d", hdev->name, speed);
++		hci_uart_set_flow_control(hu, true);
++		reinit_completion(&qca->drop_ev_comp);
++		set_bit(STATE_DROP_VENDOR_EVENT, &qca->flags);
+ 		ret = qca_set_baudrate(hdev, qca_baudrate);
+ 		if (ret) {
++			hci_uart_set_flow_control(hu, false);
++			clear_bit(STATE_DROP_VENDOR_EVENT, &qca->flags);
+ 			BT_ERR("%s: Failed to change the baud rate (%d)",
+ 			       hdev->name, ret);
+ 			return ret;
+ 		}
+ 		hci_uart_set_baudrate(hu, speed);
++		hci_uart_set_flow_control(hu, false);
++		if (!wait_for_completion_timeout(&qca->drop_ev_comp,
++					 msecs_to_jiffies(100))) {
++			BT_INFO("%s: Baudrate change event not reported",
++			       hdev->name);
++		}
++		clear_bit(STATE_DROP_VENDOR_EVENT, &qca->flags);
+ 	}
+ 
+ 	/* Setup patch / NVM configurations */
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -1391,6 +1391,8 @@ struct sk_buff *__hci_cmd_sync(struct hci_dev *hdev, u16 opcode, u32 plen,
+ 			       const void *param, u32 timeout);
+ struct sk_buff *__hci_cmd_sync_ev(struct hci_dev *hdev, u16 opcode, u32 plen,
+ 				  const void *param, u8 event, u32 timeout);
++int __hci_cmd_send(struct hci_dev *hdev, u16 opcode, u32 plen,
++		   const void *param);
+ 
+ int hci_send_cmd(struct hci_dev *hdev, __u16 opcode, __u32 plen,
+ 		 const void *param);
+diff --git a/net/bluetooth/hci_core.c b/net/bluetooth/hci_core.c
+--- a/net/bluetooth/hci_core.c
++++ b/net/bluetooth/hci_core.c
+@@ -3388,6 +3388,29 @@ int hci_send_cmd(struct hci_dev *hdev, __u16 opcode, __u32 plen,
+ 	return 0;
+ }
+ 
++int __hci_cmd_send(struct hci_dev *hdev, u16 opcode, u32 plen,
++		   const void *param)
++{
++	struct sk_buff *skb;
++
++	if (hci_opcode_ogf(opcode) != 0x3f) {
++		BT_ERR("%s unresponded command not supported", hdev->name);
++		return -EINVAL;
++	}
++
++	skb = hci_prepare_cmd(hdev, opcode, plen, param);
++	if (!skb) {
++		BT_ERR("%s no memory for command (opcode 0x%4.4x)",
++		       hdev->name, opcode);
++		return -ENOMEM;
++	}
++
++	hci_send_frame(hdev, skb);
++
++	return 0;
++}
++EXPORT_SYMBOL(__hci_cmd_send);
++
+ /* Get data from the previously sent command */
+ void *hci_sent_cmd_data(struct hci_dev *hdev, __u16 opcode)
+ {
