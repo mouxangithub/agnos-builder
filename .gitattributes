@@ -7,3 +7,5 @@ userspace/root/usr/comma/bluetooth-radio text eol=lf
 userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service text eol=lf
 userspace/root/etc/gitconfig text eol=lf
 userspace/root/usr/comma/setup -text
+*.yml text eol=lf
+*.yaml text eol=lf

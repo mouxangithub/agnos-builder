@@ -1,0 +1,9 @@
+# 手动触发按钮（等同 GitHub Actions 的 workflow_dispatch）。
+# 仓库默认分支详情页会出现「构建 Carrot AGNOS」按钮，
+# 点击后以 web_trigger_build 事件拉起 .cnb.yml 中 "$" 段的同名流水线。
+branch:
+  - reg: ^master$
+    buttons:
+      - name: 构建 Carrot AGNOS
+        description: 完整构建 boot/system 镜像并发布到 CNB Release（agnos-<VERSION>）
+        event: web_trigger_build

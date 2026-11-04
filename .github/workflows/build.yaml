@@ -122,12 +122,9 @@ jobs:
           grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
           grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
 
-      - name: Fetch immutable AGNOS 19.6 base manifests
-        run: |
-          base="https://raw.githubusercontent.com/ajouatom/openpilot/$OPENPILOT_MANIFEST_COMMIT/openpilot/system/hardware/tici"
-          curl --fail --location "$base/agnos-tici.json" --output /tmp/agnos-c3-base.json
-          curl --fail --location "$base/agnos.json" --output /tmp/agnos-c4-base.json
-
+      # The AGNOS 19.6 base manifests are vendored into base-manifests/ as a
+      # pinned, immutable snapshot (see base-manifests/SOURCE_COMMIT), so the
+      # build has no runtime GitHub raw dependency.
       - name: Package custom OTA release
         run: |
           python3 scripts/package_carrot_agnos.py \
@@ -136,8 +133,8 @@ jobs:
             --system output/system.img \
             --c3-boot output/boot-c3-c3clone.img \
             --c4-boot output/boot-c3x-c4.img \
-            --c3-base-manifest /tmp/agnos-c3-base.json \
-            --c4-base-manifest /tmp/agnos-c4-base.json \
+            --c3-base-manifest base-manifests/agnos-c3-base.json \
+            --c4-base-manifest base-manifests/agnos-c4-base.json \
             --output-dir output/carrot-ota
           printf 'builder_commit=%s\n' "$GITHUB_SHA" > output/carrot-ota/PROVENANCE
           printf 'kernel_base=%s\n' "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" >> output/carrot-ota/PROVENANCE
