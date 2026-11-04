@@ -1,0 +1,219 @@
+From db3b7e3af417179d00ff32a5d23a42252ad032f4 Mon Sep 17 00:00:00 2001
+From: ajouatom <ajouatom@gmail.com>
+Date: Thu, 27 Aug 2026 15:11:57 +0900
+Subject: [PATCH] ARM: dts: restore comma three support
+
+---
+ arch/arm64/boot/dts/qcom/Makefile       |   1 +
+ arch/arm64/boot/dts/qcom/comma_tici.dts | 154 ++++++++++++++++++++++++
+ arch/arm64/configs/tici_defconfig       |   6 +-
+ 3 files changed, 158 insertions(+), 3 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/qcom/comma_tici.dts
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 1d2302a..dc5df64 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -2,6 +2,7 @@
+ #dtb-$(CONFIG_ARCH_QCOM)	+= msm8996-mtp.dtb
+ #dtb-$(CONFIG_ARCH_QCOM)	+= apq8096-db820c.dtb
+ 
++dtb-$(CONFIG_ARCH_SDM845) += comma_tici.dtb
+ dtb-$(CONFIG_ARCH_SDM845) += comma_tizi.dtb
+ dtb-$(CONFIG_ARCH_SDM845) += comma_mici.dtb
+ dtb-$(CONFIG_ARCH_SDM845) += comma_ultimate_provisioning.dtb
+diff --git a/arch/arm64/boot/dts/qcom/comma_tici.dts b/arch/arm64/boot/dts/qcom/comma_tici.dts
+new file mode 100644
+index 0000000..626b25a
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/comma_tici.dts
+@@ -0,0 +1,154 @@
++/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 and
++ * only version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++
++/dts-v1/;
++
++#include <dt-bindings/clock/qcom,gcc-sdm845.h>
++#include <dt-bindings/clock/qcom,camcc-sdm845.h>
++#include <dt-bindings/clock/qcom,dispcc-sdm845.h>
++#include <dt-bindings/clock/qcom,rpmh.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++
++#include "sda845-v2.1.dtsi"
++
++#include "comma_common.dtsi"
++
++/* light(RPR-0521RS) and touch panel I2C, /dev/i2c-2 */
++&qupv3_se5_i2c {
++  status = "ok";
++  qcom,clk-freq-out = <100000>;
++
++  rpr0521@38 {
++    compatible = "rpr0521";
++    reg = <0x38>;
++  };
++
++  samsung-ts@17 {
++    compatible = "samsung_i2c_touchpanel";
++    reg = <0x17>;
++    interrupt-parent = <&tlmm>;
++		interrupts = <125 0x2002>;
++    interrupt-gpios = <&tlmm 125 0x2002>;
++    reset-gpios = <&tlmm 104 0>;
++    ta-gpios = <&tlmm 128 0>;
++    vdd-supply = <&tp3v3>;
++  };
++};
++
++/* GPS UART */
++&qupv3_gps_uart {
++  status = "ok";
++};
++
++&pcie0 {
++  status = "ok";
++};
++
++&pcie1 {
++  status = "ok";
++};
++
++&vendor {
++  main5v: main5v {
++    status = "ok";
++
++    compatible = "regulator-fixed";
++    regulator-name = "main5v";
++    regulator-min-microvolt = <5000000>;
++    regulator-max-microvolt = <5000000>;
++
++    gpio = <&tlmm 25 0>;
++    enable-active-high;
++    regulator-always-on;
++  };
++
++	lcd3v3: lcd3v3 {
++    status = "ok";
++
++    compatible = "regulator-fixed";
++    regulator-name = "lcd3v3";
++    regulator-min-microvolt = <3300000>;
++    regulator-max-microvolt = <3300000>;
++
++    gpio = <&pm8998_gpios 13 0>;
++    regulator-boot-on;
++    regulator-always-on;
++  };
++
++  tp3v3: tp3v3 {
++   status = "ok";
++
++   compatible = "regulator-fixed";
++   regulator-name = "tp3v3";
++   regulator-min-microvolt = <3300000>;
++   regulator-max-microvolt = <3300000>;
++
++   gpio = <&pm8998_gpios 10 0>;
++   regulator-boot-on;
++   regulator-always-on;
++  };
++
++  ssd3v3: ssd3v3 {
++    status = "ok";
++
++    compatible = "regulator-fixed";
++    regulator-name = "ssd3v3";
++    regulator-min-microvolt = <3300000>;
++    regulator-max-microvolt = <3300000>;
++
++    gpio = <&tlmm 41 0>;
++    enable-active-high;
++    regulator-always-on;
++  };
++};
++
++&soc {
++	dsi_ss_ea8074_fhd_cmd_display: qcom,dsi-display@0 {
++    compatible = "qcom,dsi-display";
++    label = "dsi_ss_ea8074_fhd_cmd_display";
++    qcom,display-type = "primary";
++    qcom,dsi-display-active;
++
++    qcom,dsi-ctrl = <&mdss_dsi0>;
++    qcom,dsi-phy = <&mdss_dsi_phy0>;
++    clocks = <&mdss_dsi0_pll BYTECLK_MUX_0_CLK>, <&mdss_dsi0_pll PCLK_MUX_0_CLK>;
++		clock-names = "src_byte_clk", "src_pixel_clk";
++
++    pinctrl-names = "panel_active", "panel_suspend";
++    //pinctrl-0 = <&sde_dsi_active &sde_te_active &lcd_3v3_en_n_active &tp_3v3_en_n_active>;
++    //pinctrl-1 = <&sde_dsi_suspend &sde_te_suspend &lcd_3v3_en_n_suspend &tp_3v3_en_n_suspend>;
++    pinctrl-0 = <&sde_dsi_active &sde_te_active>;
++    pinctrl-1 = <&sde_dsi_suspend &sde_te_suspend>;
++
++    qcom,dsi-panel = <&dsi_ss_fhd_ea8074_cmd>;
++    vddio-supply = <&pm8998_l14>;
++    vddcore-supply = <&lcd3v3>;
++
++    /*vci-supply = <&disp_vci_vreg>;*/
++  };
++};
++
++&mdss_dsi0 {
++	status = "ok";
++  qcom,dsi-pref-prim-pan = <&dsi_ss_fhd_ea8074_cmd>;
++};
++
++
++
++/* Board definition */
++/ {
++	model = "comma tici";
++	compatible = "qcom,sda845-mtp", "qcom,sda845", "qcom,mtp";
++	qcom,msm-id = <341 0x20001>, <321 0x20001>, <321 0x20000>;
++	qcom,board-id = <0x8 0>, <0x20 0>; // Support both old and new XBL
++};
+diff --git a/arch/arm64/configs/tici_defconfig b/arch/arm64/configs/tici_defconfig
+index 0cd2142..1b05a3c 100644
+--- a/arch/arm64/configs/tici_defconfig
++++ b/arch/arm64/configs/tici_defconfig
+@@ -397,7 +397,7 @@ CONFIG_ARCH_SDM845=y
+ #
+ # Bus support
+ #
+-CONFIG_PCI=n
++CONFIG_PCI=y
+ CONFIG_PCI_DOMAINS=y
+ CONFIG_PCI_DOMAINS_GENERIC=y
+ CONFIG_PCI_SYSCALL=y
+@@ -411,7 +411,7 @@ CONFIG_PCI_MSI_IRQ_DOMAIN=y
+ # ONFIG_PCI_IOV is not set
+ # CONFIG_PCI_PRI is not set
+ # CONFIG_PCI_PASID is not set
+-CONFIG_PCI_MSM=n
++CONFIG_PCI_MSM=y
+ CONFIG_PCI_LABEL=y
+ CONFIG_HOTPLUG_PCI=y
+ CONFIG_HOTPLUG_PCI_ACPI=y
+@@ -1321,7 +1321,7 @@ CONFIG_BLK_DEV_RAM_SIZE=8192
+ # CONFIG_BLK_DEV_RBD is not set
+ # CONFIG_BLK_DEV_RSXX is not set
+ CONFIG_NVME_CORE=n
+-CONFIG_BLK_DEV_NVME=n
++CONFIG_BLK_DEV_NVME=y
+ # CONFIG_NVME_TARGET is not set
+ 
+ #
+-- 
+2.45.2.windows.1
+
+

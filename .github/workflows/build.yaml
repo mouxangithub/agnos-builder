@@ -22,17 +22,23 @@ jobs:
         submodules: true
 
     - name: Get commit message
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        REPO_COMMITS_URL: ${{ github.event.repository.commits_url }}
+        HEAD_SHA: ${{ github.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         {
           echo 'LAST_COMMIT_MESSAGE<<EOF'
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "${{ github.event.head_commit.message }}"
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            COMMIT_URL=$(echo "${{ github.event.repository.commits_url }}" | sed "s|{/sha}|/${{ github.sha }}|")
-            echo "$(curl -s "$COMMIT_URL" | jq -r '.commit.message')"
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            PR_COMMIT_URL=$(echo "${{ github.event.repository.commits_url }}" | sed "s|{/sha}|/${{ github.event.pull_request.head.sha }}|")
-            echo "$(curl -s "$PR_COMMIT_URL" | jq -r '.commit.message')"
+          if [ "$EVENT_NAME" == "push" ]; then
+            printf '%s\n' "$HEAD_COMMIT_MESSAGE"
+          elif [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            COMMIT_URL=$(echo "$REPO_COMMITS_URL" | sed "s|{/sha}|/$HEAD_SHA|")
+            curl -s "$COMMIT_URL" | jq -r '.commit.message'
+          elif [ "$EVENT_NAME" == "pull_request" ]; then
+            PR_COMMIT_URL=$(echo "$REPO_COMMITS_URL" | sed "s|{/sha}|/$PR_HEAD_SHA|")
+            curl -s "$PR_COMMIT_URL" | jq -r '.commit.message'
           fi
           echo EOF
         } | tee -a $GITHUB_ENV

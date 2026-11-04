@@ -1,0 +1,151 @@
+name: build carrot AGNOS camera BT2 trial
+
+on:
+  push:
+    branches: [ master, carrot-camera-bt2-20.2 ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: carrot-agnos-camera-bt2-20.2
+  cancel-in-progress: true
+
+env:
+  AGNOS_VERSION: 20.2-carrot-bt2
+  RELEASE_TAG: agnos-20.2-carrot-bt2
+  OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+
+jobs:
+  build:
+    name: build system and device boot images
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: true
+
+      - name: Set custom AGNOS version
+        run: printf '%s' "$AGNOS_VERSION" > VERSION
+
+      - name: Apply and verify C3X/C4 USB-PD patches
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+          grep -q 'Source request: rdo=' agnos-kernel-sdm845/drivers/usb/pd/policy_engine.c
+          grep -q 'mdwc->curr_perf_mode == perf_mode' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
+          grep -q 'quiet loglevel=3' build_kernel.sh
+
+      - name: Apply native Bluetooth patch and check userspace
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-qca-diagnostics.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-qca-diagnostics.patch
+          python3 scripts/check_qca_diagnostics.py
+          git -C agnos-kernel-sdm845 apply --check ../patches/camera-sof-history-trace.patch
+          git -C agnos-kernel-sdm845 apply ../patches/camera-sof-history-trace.patch
+          bash -n userspace/root/usr/comma/bluetooth-radio
+          python3 scripts/check_bluetooth_trial.py
+
+      - name: Build C3X/C4 boot image
+        run: |
+          ./build_kernel.sh
+          mv output/boot.img output/boot-c3x-c4.img
+          python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+
+      - name: Derive common system image from immutable bt1 userspace
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y android-sdk-libsparse-utils e2fsprogs
+          python3 scripts/build_frozen_bt2_system.py
+
+      - name: Reset kernel source for C3 build
+        run: |
+          git -C agnos-kernel-sdm845 reset --hard
+          git -C agnos-kernel-sdm845 clean -fdx
+
+      - name: Apply and verify C3/C3 clone patches
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c3-tici-pcie-nvme.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+
+      - name: Apply Bluetooth patch for C3/C3 clone
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-qca-diagnostics.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-qca-diagnostics.patch
+          python3 scripts/check_qca_diagnostics.py
+          git -C agnos-kernel-sdm845 apply --check ../patches/camera-sof-history-trace.patch
+          git -C agnos-kernel-sdm845 apply ../patches/camera-sof-history-trace.patch
+
+      - name: Build and verify C3/C3 clone boot image
+        run: |
+          ./build_kernel.sh
+          mv output/boot.img output/boot-c3-c3clone.img
+          python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+          grep -a -q 'comma tici' output/boot-c3-c3clone.img
+          grep -q '^CONFIG_PCI=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_PCI_MSM=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
+
+      - name: Fetch immutable AGNOS 19.6 base manifests
+        run: |
+          base="https://raw.githubusercontent.com/ajouatom/openpilot/$OPENPILOT_MANIFEST_COMMIT/openpilot/system/hardware/tici"
+          curl --fail --location "$base/agnos-tici.json" --output /tmp/agnos-c3-base.json
+          curl --fail --location "$base/agnos.json" --output /tmp/agnos-c4-base.json
+
+      - name: Package custom OTA release
+        run: |
+          python3 scripts/package_carrot_agnos.py \
+            --version "$AGNOS_VERSION" \
+            --release-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
+            --system output/system.img \
+            --c3-boot output/boot-c3-c3clone.img \
+            --c4-boot output/boot-c3x-c4.img \
+            --c3-base-manifest /tmp/agnos-c3-base.json \
+            --c4-base-manifest /tmp/agnos-c4-base.json \
+            --output-dir output/carrot-ota
+          printf 'builder_commit=%s\n' "$GITHUB_SHA" > output/carrot-ota/PROVENANCE
+          printf 'kernel_base=%s\n' "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" >> output/carrot-ota/PROVENANCE
+          printf 'agnos_version=%s\n' "$AGNOS_VERSION" >> output/carrot-ota/PROVENANCE
+          printf 'openpilot_manifest_commit=%s\n' "$OPENPILOT_MANIFEST_COMMIT" >> output/carrot-ota/PROVENANCE
+          printf 'system_base_release=%s\n' 'agnos-20.2-carrot-bt1' >> output/carrot-ota/PROVENANCE
+          printf 'system_base_raw_sha256=%s\n' '943840f0b1ccb53dd705174dbaf2cfa03b88ca07cad2ab94585d65b2bdf6453b' >> output/carrot-ota/PROVENANCE
+          (cd output/carrot-ota && sha256sum PROVENANCE >> SHA256SUMS)
+          cp patches/CAMERA_BT2.md output/carrot-ota/BLUETOOTH.md
+          (cd output/carrot-ota && sha256sum BLUETOOTH.md >> SHA256SUMS)
+          ls -lh output/carrot-ota
+
+      - name: Upload verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carrot-agnos-20.2-camera-bt2
+          path: output/carrot-ota
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Publish custom AGNOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title 'Carrot AGNOS 20.2 camera BT2 trial (frozen bt1 userspace)' \
+              --notes 'Experimental camera investigation branch only. Derived from the frozen AGNOS 20.2-carrot-bt1 userspace image with Qualcomm diagnostic ACL routing corrected; Bluetooth functionality and existing camera scheduling are preserved. This is not a confirmed camera-gap fix. C3 and C4 hardware validation are separate.'
+          fi
+          gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber

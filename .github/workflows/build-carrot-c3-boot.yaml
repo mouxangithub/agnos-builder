@@ -1,0 +1,101 @@
+name: build carrot C3 AGNOS 19.6 boot
+
+on:
+  push:
+    branches: [ carrot-c3-19.6 ]
+    paths-ignore:
+      - .github/workflows/build-carrot-c3-boot.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: carrot-c3-19.6-boot
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: carrot-c3-19.6-v1
+  RELEASE_ASSET: carrot-c3-agnos-19.6-boot.img.xz
+
+jobs:
+  build:
+    name: build and verify C3 boot image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        lfs: true
+        submodules: true
+
+    - name: Apply C3 device tree and PCIe/NVMe patch
+      run: git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
+
+    - name: Build kernel and boot image
+      run: ./build_kernel.sh
+
+    - name: Verify supported hardware
+      run: |
+        grep -a -q 'comma tici' output/boot.img
+        grep -a -q 'comma tizi' output/boot.img
+        grep -a -q 'comma mici' output/boot.img
+        grep -q '^CONFIG_PCI=y$' agnos-kernel-sdm845/out/.config
+        grep -q '^CONFIG_PCI_MSM=y$' agnos-kernel-sdm845/out/.config
+        grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
+        grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
+
+    - name: Package verified boot image
+      run: |
+        cp output/boot.img "output/${RELEASE_ASSET%.xz}"
+        xz -T0 -9 "output/${RELEASE_ASSET%.xz}"
+        raw_hash=$(sha256sum output/boot.img | awk '{print $1}')
+        raw_size=$(stat -c '%s' output/boot.img)
+        padding_size=$(( (4096 - raw_size % 4096) % 4096 ))
+        ondevice_hash=$( { cat output/boot.img; head -c "$padding_size" /dev/zero; } | sha256sum | awk '{print $1}')
+        compressed_hash=$(sha256sum "output/$RELEASE_ASSET" | awk '{print $1}')
+        printf '%s  boot.img\n' "$raw_hash" > output/boot.img.sha256
+        printf '%s  boot.img (4KiB padded)\n' "$ondevice_hash" > output/boot.img.ondevice.sha256
+        printf '%s  %s\n' "$compressed_hash" "$RELEASE_ASSET" > output/boot.img.xz.sha256
+        printf '%s\n' "$raw_size" > output/boot.img.size
+        jq -n \
+          --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${RELEASE_ASSET}" \
+          --arg hash "$raw_hash" \
+          --arg hash_raw "$raw_hash" \
+          --arg ondevice_hash "$ondevice_hash" \
+          --argjson size "$raw_size" \
+          '{url: $url, hash: $hash, hash_raw: $hash_raw, size: $size, ondevice_hash: $ondevice_hash}' \
+          > output/agnos-boot-manifest-entry.json
+
+    - name: Upload verification artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: carrot-c3-agnos-19.6-boot
+        path: |
+          output/${{ env.RELEASE_ASSET }}
+          output/boot.img.sha256
+          output/boot.img.ondevice.sha256
+          output/boot.img.xz.sha256
+          output/boot.img.size
+          output/agnos-boot-manifest-entry.json
+        compression-level: 0
+
+    - name: Publish verified boot image
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title 'Carrot C3 AGNOS 19.6 boot v1' \
+            --notes 'Official AGNOS 19.6 kernel with restored comma three device tree and PCIe/NVMe support. USB-PD changes are not included.'
+        fi
+        gh release upload "$RELEASE_TAG" \
+          "output/$RELEASE_ASSET" \
+          output/boot.img.sha256 \
+          output/boot.img.ondevice.sha256 \
+          output/boot.img.xz.sha256 \
+          output/boot.img.size \
+          output/agnos-boot-manifest-entry.json \
+          --clobber

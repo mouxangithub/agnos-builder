@@ -1,0 +1,132 @@
+name: build carrot SDM845 USB-PD v3 kernels
+
+on:
+  push:
+    branches: [ carrot-c4-usbpd-v3 ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  USBPD_RELEASE_TAG: usbpd-test-v3-agnos19.6
+
+jobs:
+  build:
+    name: build ${{ matrix.group }} boot image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: c3x-c4
+            c3_boot: false
+            asset: boot-c3x-c4.img
+          - group: c3-c3clone
+            c3_boot: true
+            asset: boot-c3-c3clone.img
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: true
+
+      - name: Apply C3 device tree and PCIe/NVMe patch
+        if: matrix.c3_boot
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c3-tici-pcie-nvme.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
+
+      - name: Validate and apply C4 USB-PD v2 kernel patch
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+
+      - name: Validate and apply C4 USB-PD v3 kernel patch
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+
+      - name: Verify kernel configuration
+        run: |
+          grep -q 'Source request: rdo=' agnos-kernel-sdm845/drivers/usb/pd/policy_engine.c
+          grep -q 'console-size = <0x100000>' agnos-kernel-sdm845/arch/arm64/boot/dts/qcom/sdm845.dtsi
+          grep -q 'mdwc->curr_perf_mode == perf_mode' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
+          grep -q 'mdwc->last_irq_cnt = dwc->irq_cnt' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
+          grep -q 'quiet loglevel=3' build_kernel.sh
+          if grep -q 'func msm_dwc3_perf_vote_\* +p' build_kernel.sh; then
+            echo 'Refusing high-volume DWC3 performance diagnostics in the deployable v3 image'
+            exit 1
+          fi
+
+      - name: Build signed kernel image
+        run: ./build_kernel.sh
+
+      - name: Verify C3 boot support
+        if: matrix.c3_boot
+        run: |
+          grep -a -q 'comma tici' output/boot.img
+          grep -q '^CONFIG_PCI=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_PCI_MSM=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
+
+      - name: Record image provenance
+        env:
+          BOOT_ASSET: ${{ matrix.asset }}
+          DEVICE_GROUP: ${{ matrix.group }}
+        run: |
+          cd output
+          mv boot.img "$BOOT_ASSET"
+          sha256sum "$BOOT_ASSET" | tee "$BOOT_ASSET.sha256"
+          stat -c '%s' "$BOOT_ASSET" > "$BOOT_ASSET.size"
+          printf 'builder_commit=%s\n' "${GITHUB_SHA}" > "$BOOT_ASSET.provenance"
+          printf 'device_group=%s\n' "$DEVICE_GROUP" >> "$BOOT_ASSET.provenance"
+          printf 'agnos_version=19.6\n' >> "$BOOT_ASSET.provenance"
+          printf 'kernel_base=%s\n' "$(git -C ../agnos-kernel-sdm845 rev-parse HEAD)" >> "$BOOT_ASSET.provenance"
+          printf 'kernel_v2_patch_sha256=%s\n' "$(sha256sum ../patches/c4-usbpd-v2.patch | cut -d' ' -f1)" >> "$BOOT_ASSET.provenance"
+          printf 'kernel_v3_patch_sha256=%s\n' "$(sha256sum ../patches/c4-usbpd-v3.patch | cut -d' ' -f1)" >> "$BOOT_ASSET.provenance"
+          if [ -f ../patches/c3-tici-pcie-nvme.patch ] && [ "$DEVICE_GROUP" = c3-c3clone ]; then
+            printf 'c3_patch_sha256=%s\n' "$(sha256sum ../patches/c3-tici-pcie-nvme.patch | cut -d' ' -f1)" >> "$BOOT_ASSET.provenance"
+          fi
+
+      - name: Upload boot image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carrot-usbpd-v3-${{ matrix.group }}-boot
+          path: |
+            output/${{ matrix.asset }}
+            output/${{ matrix.asset }}.sha256
+            output/${{ matrix.asset }}.size
+            output/${{ matrix.asset }}.provenance
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: publish device-specific boot images
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified boot images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: carrot-usbpd-v3-*-boot
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish replaceable AGNOS 19.6 test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$USBPD_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$USBPD_RELEASE_TAG" \
+              --title "Carrot SDM845 USB-PD kernel v3 for AGNOS 19.6" \
+              --notes "Device-specific AGNOS 19.6 boot images for C3/C3 clone and C3X/C4. Includes USB-PD Capability Mismatch handling, per-controller DWC3 performance voting, expanded pstore, and production log levels. Install only through the guarded carrot-egpu-usbpd-v3 updater." \
+              --prerelease
+          fi
+          gh release upload "$USBPD_RELEASE_TAG" \
+            release-assets/* --clobber

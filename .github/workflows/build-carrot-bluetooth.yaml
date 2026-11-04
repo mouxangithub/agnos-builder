@@ -1,0 +1,149 @@
+name: build carrot AGNOS Bluetooth
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: carrot-agnos-bluetooth
+  cancel-in-progress: true
+
+env:
+  OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+
+jobs:
+  build:
+    name: build system and device boot images
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: true
+
+      # The repository VERSION is the single source of truth: it tracks
+      # whatever the upstream comma AGNOS tree carries after each sync, so
+      # packaging and the release tag follow it with no workflow edits.
+      - name: Read AGNOS version from the repository
+        run: |
+          AGNOS_VERSION="$(tr -d '[:space:]' < VERSION)"
+          case "$AGNOS_VERSION" in
+            ''|*[!A-Za-z0-9._-]*)
+              echo "VERSION contains an unsafe or empty value: '$AGNOS_VERSION'" >&2
+              exit 1 ;;
+          esac
+          echo "AGNOS_VERSION=$AGNOS_VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=agnos-$AGNOS_VERSION" >> "$GITHUB_ENV"
+          echo "Building AGNOS $AGNOS_VERSION as release agnos-$AGNOS_VERSION"
+
+      - name: Apply and verify C3X/C4 USB-PD patches
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+          grep -q 'Source request: rdo=' agnos-kernel-sdm845/drivers/usb/pd/policy_engine.c
+          grep -q 'mdwc->curr_perf_mode == perf_mode' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
+          grep -q 'quiet loglevel=3' build_kernel.sh
+
+      - name: Apply native Bluetooth patch and check userspace
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+          bash -n userspace/root/usr/comma/bluetooth-radio
+          python3 scripts/check_bluetooth_trial.py
+          ./scripts/validate_carrot_inputs.sh
+
+      - name: Build C3X/C4 boot image
+        run: |
+          ./build_kernel.sh
+          mv output/boot.img output/boot-c3x-c4.img
+          python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+
+      - name: Build common system image
+        env:
+          GIT_HASH: ${{ github.sha }}
+        run: ./build_system.sh
+
+      - name: Reset kernel source for C3 build
+        run: |
+          git -C agnos-kernel-sdm845 reset --hard
+          git -C agnos-kernel-sdm845 clean -fdx
+
+      - name: Apply and verify C3/C3 clone patches
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c3-tici-pcie-nvme.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+
+      - name: Apply Bluetooth patch for C3/C3 clone
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+          git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+
+      - name: Build and verify C3/C3 clone boot image
+        run: |
+          ./build_kernel.sh
+          mv output/boot.img output/boot-c3-c3clone.img
+          python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+          grep -a -q 'comma tici' output/boot-c3-c3clone.img
+          grep -q '^CONFIG_PCI=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_PCI_MSM=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
+          grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
+
+      - name: Fetch immutable AGNOS 19.6 base manifests
+        run: |
+          base="https://raw.githubusercontent.com/ajouatom/openpilot/$OPENPILOT_MANIFEST_COMMIT/openpilot/system/hardware/tici"
+          curl --fail --location "$base/agnos-tici.json" --output /tmp/agnos-c3-base.json
+          curl --fail --location "$base/agnos.json" --output /tmp/agnos-c4-base.json
+
+      - name: Package custom OTA release
+        run: |
+          python3 scripts/package_carrot_agnos.py \
+            --version "$AGNOS_VERSION" \
+            --release-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
+            --system output/system.img \
+            --c3-boot output/boot-c3-c3clone.img \
+            --c4-boot output/boot-c3x-c4.img \
+            --c3-base-manifest /tmp/agnos-c3-base.json \
+            --c4-base-manifest /tmp/agnos-c4-base.json \
+            --output-dir output/carrot-ota
+          printf 'builder_commit=%s\n' "$GITHUB_SHA" > output/carrot-ota/PROVENANCE
+          printf 'kernel_base=%s\n' "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" >> output/carrot-ota/PROVENANCE
+          printf 'agnos_version=%s\n' "$AGNOS_VERSION" >> output/carrot-ota/PROVENANCE
+          printf 'openpilot_manifest_commit=%s\n' "$OPENPILOT_MANIFEST_COMMIT" >> output/carrot-ota/PROVENANCE
+          (cd output/carrot-ota && sha256sum PROVENANCE >> SHA256SUMS)
+          cp patches/BLUETOOTH.md output/carrot-ota/BLUETOOTH.md
+          (cd output/carrot-ota && sha256sum BLUETOOTH.md >> SHA256SUMS)
+          ls -lh output/carrot-ota
+
+      - name: Upload verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carrot-agnos-${{ env.AGNOS_VERSION }}-bluetooth
+          path: output/carrot-ota
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Publish custom AGNOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "Carrot AGNOS $AGNOS_VERSION Bluetooth trial" \
+              --notes "AGNOS $AGNOS_VERSION userspace and AMD firmware with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. Opt-in radio only; tested devices are recorded separately. Device-specific manifests are provided for C3/C3 clone and C3X/C4. Hardware rollout remains experimental."
+          fi
+          gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber

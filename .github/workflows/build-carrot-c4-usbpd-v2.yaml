@@ -1,0 +1,70 @@
+name: build carrot C4 USB-PD v2 kernel
+
+on:
+  push:
+    branches: [ carrot-c4-usbpd-v2 ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  USBPD_RELEASE_TAG: usbpd-test-v2-c4
+
+jobs:
+  build:
+    name: build C4 diagnostic boot image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: true
+
+      - name: Validate and apply C4 USB-PD v2 kernel patch
+        run: |
+          git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+
+      - name: Verify diagnostic kernel configuration
+        run: |
+          grep -q 'Source request: rdo=' agnos-kernel-sdm845/drivers/usb/pd/policy_engine.c
+          grep -q 'console-size = <0x100000>' agnos-kernel-sdm845/arch/arm64/boot/dts/qcom/sdm845.dtsi
+          grep -q 'ignore_loglevel no_console_suspend' build_kernel.sh
+
+      - name: Build signed kernel image
+        run: ./build_kernel.sh
+
+      - name: Record image provenance
+        run: |
+          cd output
+          sha256sum boot.img | tee boot.img.sha256
+          printf 'builder_commit=%s\n' "${GITHUB_SHA}" > boot.img.provenance
+          printf 'kernel_base=%s\n' "$(git -C ../agnos-kernel-sdm845 rev-parse HEAD)" >> boot.img.provenance
+          printf 'kernel_patch_sha256=%s\n' "$(sha256sum ../patches/c4-usbpd-v2.patch | cut -d' ' -f1)" >> boot.img.provenance
+
+      - name: Upload boot image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carrot-c4-usbpd-v2-boot
+          path: |
+            output/boot.img
+            output/boot.img.sha256
+            output/boot.img.provenance
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish replaceable C4 test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$USBPD_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$USBPD_RELEASE_TAG" \
+              --title "Carrot C4 USB-PD diagnostic kernel v2" \
+              --notes "Experimental AGNOS 19.6 C4 boot image with the USB-PD Capability Mismatch fix, expanded pstore console, and PD/DWC3/xHCI diagnostics. Install only through the guarded carrot-egpu-usbpd-v2 trial script." \
+              --prerelease
+          fi
+          gh release upload "$USBPD_RELEASE_TAG" \
+            output/boot.img output/boot.img.sha256 output/boot.img.provenance --clobber

@@ -1,3 +1,9 @@
 *.deb filter=lfs diff=lfs merge=lfs -text
 *.ko filter=lfs diff=lfs merge=lfs -text
 userspace/root/usr/share/fonts/NotoSans??-Regular.woff2 filter=lfs diff=lfs merge=lfs -text
+# Carrot-trial text files must stay LF so CI hash pins match the checkout.
+*.sh text eol=lf
+userspace/root/usr/comma/bluetooth-radio text eol=lf
+userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service text eol=lf
+userspace/root/etc/gitconfig text eol=lf
+userspace/root/usr/comma/setup -text
