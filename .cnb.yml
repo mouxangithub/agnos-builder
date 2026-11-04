@@ -37,6 +37,11 @@ master:
         - name: install build deps
           script: |
             set -e
+            # 容器内无 TERM，tzdata 默认进交互配置会 dpkg 报错并连锁拖垮 python3
+            export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+            echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections
+            echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections
+            ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime || true
             # 换腾讯云内网镜像源，加速 apt
             if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
               sed -i 's|archive.ubuntu.com|mirrors.cloud.tencent.com|g; s|security.ubuntu.com|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/ubuntu.sources
