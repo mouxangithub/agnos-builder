@@ -58,16 +58,22 @@ master:
                 tail -c 3000 /tmp/apt-base.log
                 exit 1
               }
-            # python3 单独安装（依赖 tzdata，历史上在这里配置失败）
+            # python3 单独安装。CNB 任务容器把 /etc/localtime bind-mount 进来，
+            # tzdata postinst `mv /etc/localtime.dpkg-new /etc/localtime` 会报
+            # "Device or resource busy"。失败时把 postinst 换成 no-op 再补配置。
             apt-get install -y --no-install-recommends python3 > /tmp/apt-py.log 2>&1 || {
-                echo "=== python3 apt failed, tzdata/python configure sections ==="
-                grep -n -B2 -A25 'Setting up tzdata\|Processing triggers for tzdata\|dpkg: error processing' /tmp/apt-py.log | head -150 || true
-                echo "=== python3 apt failed, log tail ==="
-                tail -c 2000 /tmp/apt-py.log
-                echo "=== retry: configure tzdata directly ==="
-                dpkg --configure tzdata 2>&1 | tail -40 || true
-                exit 1
+                echo "=== python3 apt failed, applying /etc/localtime bind-mount workaround ==="
+                tail -c 1200 /tmp/apt-py.log || true
+                printf '#!/bin/sh\nexit 0\n' > /var/lib/dpkg/info/tzdata.postinst
+                DEBIAN_FRONTEND=noninteractive apt-get install -f -y \
+                  --no-install-recommends > /tmp/apt-fix.log 2>&1 || {
+                    echo "=== install -f failed, tail ==="
+                    tail -c 2000 /tmp/apt-fix.log
+                    exit 1
+                  }
+                echo "=== tzdata workaround applied ==="
               }
+            python3 --version
             git lfs install
 
         - name: verify docker-in-docker
