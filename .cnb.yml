@@ -19,6 +19,12 @@ master:
         image: ubuntu:24.04
       services:
         - docker
+      # CNB prepare 默认会按 .gitmodules 的相对 URL 拉 submodule，在 CNB 上会
+      # 解析到 cnb.cool/commaai/...（仓库不存在）导致 prepare 失败。这里关掉，
+      # 由下方 "prepare kernel submodule" stage 改写为 gh-proxy 后浅克隆。
+      git:
+        submodules:
+          enable: false
       env:
         # OTA manifest 里的下载链接指向 CNB mirror release
         CNB_REPO: mouxancnb/agnos-builder
@@ -182,6 +188,9 @@ master:
         image: ubuntu:24.04
       services:
         - docker
+      git:
+        submodules:
+          enable: false
       env:
         CNB_REPO: mouxancnb/agnos-builder
         OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
