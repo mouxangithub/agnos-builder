@@ -137,11 +137,30 @@ master:
             ./build_kernel.sh
             mv output/boot.img output/boot-c3x-c4.img
             python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+            # CNB runner 磁盘固定配额：内核 out 树（数 GB）和 buildkit 缓存此后不再
+            # 需要（C3 构建会重新生成），不清理会导致后面 build system 阶段
+            # img2simg 写 sparse 文件时 ENOSPC（"Failed to write sparse file"）。
+            rm -rf agnos-kernel-sdm845/out
+            docker builder prune -f >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null 2>&1 || true
+            df -h /
 
         - name: build common system image
           script: |
             set -e
-            GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh
+            set -o pipefail
+            echo "=== disk before system build ==="
+            df -h / || true
+            # 输出 tee 到文件，失败时打印尾部（服务端对长日志有截断，尾部最可靠）
+            GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh 2>&1 | tee /tmp/system-build.log || {
+              echo "=== build_system.sh failed, log tail ==="
+              tail -c 4000 /tmp/system-build.log || true
+              echo "=== disk at failure ==="
+              df -h / || true
+              exit 1
+            }
+            echo "=== disk after system build ==="
+            df -h / || true
 
         - name: reset kernel source and apply C3/C3 clone patches
           script: |
