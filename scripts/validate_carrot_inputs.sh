@@ -76,6 +76,17 @@ expect_line "$RADIO" "    bluetoothctl power on >/dev/null 2>&1 && break"
 
 expect_line userspace/services.sh "systemctl enable carrot-bluetooth-radio.service"
 
+# bluetooth-radio must be committed with the executable bit: the image packs
+# userspace/root via tar (which preserves modes), and systemd fails every Exec*
+# line with status=203/EXEC against a non-executable script (this shipped as
+# 644 once and disabled the radio entirely until manually chmod'ed).
+radio_mode="$(git -C "$DIR" ls-files -s userspace/root/usr/comma/bluetooth-radio | awk '{print $1}')"
+if [ "$radio_mode" != "100755" ]; then
+  echo "userspace/root/usr/comma/bluetooth-radio is committed as $radio_mode, need 100755" >&2
+  echo "fix: git update-index --chmod=+x userspace/root/usr/comma/bluetooth-radio" >&2
+  exit 1
+fi
+
 GITCONFIG=userspace/root/etc/gitconfig
 expect_line "$GITCONFIG" '[url "https://gh-proxy.com/https://github.com/"]'
 expect_line "$GITCONFIG" '	insteadOf = https://github.com/'
