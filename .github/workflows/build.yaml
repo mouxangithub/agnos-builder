@@ -15,7 +15,8 @@ concurrency:
 env:
   OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
   # OTA manifests embed download URLs; they point at the CNB mirror release,
-  # which is where devices fetch the images from.
+  # which is where devices fetch the images from. The CNB release itself is
+  # published by the CNB pipeline (.cnb.yml), not by this workflow.
   CNB_REPO: mouxancnb/agnos-builder
 
 jobs:
@@ -167,61 +168,6 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" output/carrot-ota/* --clobber
 
-      # Mirror the same release to the CNB repo: the OTA manifest URLs point
-      # there, so the assets must exist under the same tag. Idempotent: an
-      # existing release is reused and assets are overwritten.
-      - name: Publish release to CNB mirror
-        env:
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CNB_TOKEN:-}" ]; then
-            echo "::warning::CNB_TOKEN not configured, skipping CNB release publish"
-            exit 0
-          fi
-          api="https://api.cnb.cool/${CNB_REPO}"
-          auth=(-H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/vnd.cnb.api+json")
-
-          # Create-or-get the release for this tag (idempotent on reruns).
-          release="$(curl -sf "${auth[@]}" "$api/-/releases/tags/$RELEASE_TAG" || true)"
-          if [ -z "$release" ]; then
-            release="$(curl -sf -X POST "${auth[@]}" -H 'Content-Type: application/json' \
-              -d "$(jq -n --arg tag "$RELEASE_TAG" --arg ver "$AGNOS_VERSION" \
-                '{tag_name: $tag, name: ("Carrot AGNOS " + $ver),
-                  body: ("Carrot AGNOS " + $ver + " with Carrot USB-PD v3 kernels and native WCN3990 Bluetooth. OTA manifests for C3/C3 clone and C3X/C4."),
-                  is_draft: false, is_prerelease: true, make_latest: "false", target_commitish: "master"}' \
-              )" "$api/-/releases")"
-          fi
-          release_id="$(echo "$release" | jq -r '.id')"
-          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
-            echo "::error::could not resolve CNB release id for $RELEASE_TAG"
-            echo "$release"
-            exit 1
-          fi
-          echo "CNB release id: $release_id"
-
-          for f in output/carrot-ota/*; do
-            name="$(basename "$f")"
-            size="$(stat -c%s "$f")"
-            up="$(curl -sf -X POST "${auth[@]}" -H 'Content-Type: application/json' \
-              -d "$(jq -n --arg n "$name" --argjson s "$size" \
-                '{asset_name: $n, size: $s, overwrite: true}')" \
-              "$api/-/releases/$release_id/asset-upload-url")"
-            upload_url="$(echo "$up" | jq -r '.upload_url')"
-            verify_url="$(echo "$up" | jq -r '.verify_url')"
-            [ -n "$upload_url" ] && [ "$upload_url" != "null" ] || { echo "::error::no upload_url for $name"; exit 1; }
-
-            # Presigned PUT: no auth header, stream from disk.
-            code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-              -H 'Content-Type: application/octet-stream' \
-              --data-binary "@$f" "$upload_url")"
-            [[ "$code" =~ ^2 ]] || { echo "::error::asset PUT failed for $name (http $code)"; exit 1; }
-
-            # Confirm the upload; verify_url carries %2F path segments, so it
-            # must go through curl (no URL re-encoding) as POST with auth.
-            code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-              -H "Authorization: Bearer $CNB_TOKEN" -H 'Accept: application/json' \
-              "$verify_url")"
-            [[ "$code" =~ ^2 ]] || { echo "::error::upload verification failed for $name (http $code)"; exit 1; }
-            echo "uploaded $name ($size bytes) to CNB release $RELEASE_TAG"
-          done
+      # CNB releases are published natively by the CNB pipeline (.cnb.yml,
+      # which runs on pushes to the CNB mirror repo). This workflow only
+      # publishes to GitHub.
