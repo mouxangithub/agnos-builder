@@ -65,7 +65,17 @@ prepare() {
   [[ "$slot" == _a || "$slot" == _b ]]
   [[ -b "$device" ]]
 
-  mkdir -p "$FIRMWARE_MOUNT" "$FIRMWARE_BIND" "$BLUETOOTH_STATE" "$BLUETOOTH_BIND"
+  # /lib/firmware/qca is the bind-mount target for the bluetooth firmware
+  # partition. On a read-only rootfs the directory must already exist in the
+  # image; if it is missing, temporarily remount / rw to create it.
+  for d in "$FIRMWARE_BIND" "$BLUETOOTH_BIND"; do
+    if ! mkdir -p "$d" 2>/dev/null; then
+      mount -o remount,rw /
+      mkdir -p "$d"
+      mount -o remount,ro /
+    fi
+  done
+  mkdir -p "$FIRMWARE_MOUNT" "$BLUETOOTH_STATE"
   chmod 700 "$BLUETOOTH_STATE"
   mountpoint -q "$FIRMWARE_MOUNT" || mount -o ro,nosuid,nodev,noexec "$device" "$FIRMWARE_MOUNT"
   mountpoint -q "$FIRMWARE_BIND" || mount --bind "$FIRMWARE_MOUNT/image" "$FIRMWARE_BIND"
