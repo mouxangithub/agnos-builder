@@ -7,19 +7,19 @@ export DEBIAN_FRONTEND=noninteractive
 # Identify this image to openpilot.
 touch /TICI /AGNOS
 
-# Install apt-fast.
+# Plain apt-get only: apt-fast's aria2c parallel downloads are flaky in CI.
 apt-get update
 apt-get install --no-install-recommends -yq ca-certificates curl sudo wget
-bash -c "$(curl -fsSL https://git.io/vokNn)"
 
 # Base packages, development tools, and networking.
-apt-fast upgrade -yq
-apt-fast install --no-install-recommends -yq \
+apt-get upgrade -yq
+apt-get install --no-install-recommends -yq \
     adduser \
     alsa-utils \
     apport \
     apport-retrace \
     bc \
+    bluez \
     dnsmasq-base \
     gdb \
     git \
@@ -45,6 +45,7 @@ apt-fast install --no-install-recommends -yq \
     openssl \
     ppp \
     psmisc \
+    rfkill \
     rsync \
     strace \
     systemd \

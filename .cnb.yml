@@ -1,0 +1,269 @@
+# 云原生构建（CNB）流水线 —— 与 .github/workflows/build.yaml 等价的第二条构建链。
+#
+# 设计要点：
+#   * 节点选 arm64 原生（cnb:arch:arm64:v8），与 GitHub 的 ubuntu-24.04-arm 对等：
+#     内核原生编译、system 镜像构建不需要 qemu/binfmt/privileged。
+#   * 发布 CNB Release 用流水线内置的 CNB_TOKEN，无需配置任何 secret。
+#   * base manifest 已 vendor 进 base-manifests/（用 commit 钉死的不可变快照），
+#     构建过程零 GitHub 直连下载（仅内核 submodule 经 gh-proxy 拉取）。
+#   * .ccache 与内核源码目录用 copy-on-write 卷跨构建持久化，替代 actions/cache。
+#   * 注意：CNB 的 web_trigger/api_trigger 等事件只能挂在 "$" 兜底分支下。
+
+master:
+  push:
+    - name: build-carrot-agnos
+      runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 16
+      docker:
+        image: ubuntu:24.04
+      services:
+        - docker
+      # CNB prepare 默认会按 .gitmodules 的相对 URL 拉 submodule，在 CNB 上会
+      # 解析到 cnb.cool/commaai/...（仓库不存在）导致 prepare 失败。这里关掉，
+      # 由下方 "prepare kernel submodule" stage 改写为 gh-proxy 后浅克隆。
+      git:
+        submodules:
+          enable: false
+      env:
+        # OTA manifest 里的下载链接指向 CNB mirror release
+        CNB_REPO: mouxancnb/agnos-builder
+        # 仅用于 PROVENANCE 留痕；manifest 快照已 vendor 进仓库
+        OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+        # CNB dind 存储配额小：rootfs 在 docker 里构建，镜像组装移到宿主侧
+        SPLIT_IMAGE_BUILD: "1"
+      volumes:
+        - .ccache:copy-on-write
+        - agnos-kernel-sdm845:copy-on-write
+      stages: &build_stages
+        - name: install build deps
+          script: |
+            set -e
+            # 容器内无 TERM，tzdata 默认进交互配置会 dpkg 报错并连锁拖垮 python3
+            export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+            echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections || true
+            echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections || true
+            # 换腾讯云内网镜像源，加速 apt
+            if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+              sed -i 's|archive.ubuntu.com|mirrors.cloud.tencent.com|g; s|security.ubuntu.com|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/ubuntu.sources
+            else
+              sed -i 's|archive.ubuntu.com|mirrors.cloud.tencent.com|g; s|security.ubuntu.com|mirrors.cloud.tencent.com|g' /etc/apt/sources.list
+            fi
+            apt-get update
+            # docker.io 提供 docker CLI（守护进程由 CNB docker service 提供）
+            # docker-buildx 供 build_system.sh 的 `docker buildx build` 使用
+            # e2fsprogs/libcap2-bin 供 SPLIT_IMAGE_BUILD 宿主侧组装 system 镜像
+            # （android-sdk-libsparse-utils 依赖 python3/tzdata，放到下一步装）
+            # 先装不依赖 python3/tzdata 的基础包，失败即打印尾部日志
+            apt-get install -y --no-install-recommends \
+              git git-lfs curl jq xz-utils perl ca-certificates \
+              e2fsprogs libcap2-bin \
+              docker.io docker-buildx > /tmp/apt-base.log 2>&1 || {
+                echo "=== base apt failed, tail ==="
+                tail -c 3000 /tmp/apt-base.log
+                exit 1
+              }
+            # python3 单独安装（android-sdk-libsparse-utils 也依赖它）。
+            # CNB 任务容器把 /etc/localtime bind-mount 进来，tzdata postinst
+            # `mv /etc/localtime.dpkg-new /etc/localtime` 会报
+            # "Device or resource busy"。失败时把 postinst 换成 no-op 再补配置。
+            apt-get install -y --no-install-recommends \
+              python3 android-sdk-libsparse-utils > /tmp/apt-py.log 2>&1 || {
+                echo "=== python3 apt failed, applying /etc/localtime bind-mount workaround ==="
+                tail -c 1200 /tmp/apt-py.log || true
+                printf '#!/bin/sh\nexit 0\n' > /var/lib/dpkg/info/tzdata.postinst
+                DEBIAN_FRONTEND=noninteractive apt-get install -f -y \
+                  --no-install-recommends > /tmp/apt-fix.log 2>&1 || {
+                    echo "=== install -f failed, tail ==="
+                    tail -c 2000 /tmp/apt-fix.log
+                    exit 1
+                  }
+                echo "=== tzdata workaround applied ==="
+              }
+            python3 --version
+            git lfs install
+
+        - name: verify docker-in-docker
+          script: |
+            set -e
+            # build_kernel.sh 用 `docker run -v $PWD:$PWD` + `docker exec` 编内核，
+            # dind 守护进程必须能看到工作区路径；此处提前探明，失败即快速报错。
+            docker run --rm -v "$PWD:/probe" alpine:3.20 \
+              sh -c 'test -f /probe/build_kernel.sh && test -d /probe/agnos-kernel-sdm845 && echo "dind host-path mount OK"'
+
+        - name: prepare kernel submodule
+          script: |
+            set -e
+            # CNB 仓库里相对路径 submodule 会解析到 cnb.cool，无法用 submodule update。
+            # 直接按 pinned commit 浅 fetch GitHub 源（GitHub 支持按 SHA fetch）。
+            # --progress 让传输进度持续输出，避免触发平台默认 10 分钟无输出超时。
+            want="$(git ls-tree HEAD agnos-kernel-sdm845 | awk '{print $3}')"
+            have=""
+            # 注意：目录存在但没有 .git 时，rev-parse 会向上解析到工作区仓库自己的 HEAD，
+            # 必须先检查 .git 再取值
+            if [ -e agnos-kernel-sdm845/.git ]; then
+              have="$(git -C agnos-kernel-sdm845 rev-parse HEAD 2>/dev/null || true)"
+            fi
+            if [ "$have" = "$want" ]; then
+              echo "kernel submodule cached at $want"
+            else
+              echo "kernel submodule missing/stale (have=${have:-none} want=$want), fetching"
+              rm -rf agnos-kernel-sdm845
+              ok=""
+              for url in \
+                "https://gh-proxy.com/https://github.com/commaai/agnos-kernel-sdm845.git" \
+                "https://ghfast.top/https://github.com/commaai/agnos-kernel-sdm845.git" \
+                "https://github.com/commaai/agnos-kernel-sdm845.git"; do
+                echo "=== trying kernel fetch from $url ==="
+                if git init -q agnos-kernel-sdm845 \
+                  && git -C agnos-kernel-sdm845 remote add origin "$url" \
+                  && git -C agnos-kernel-sdm845 fetch --depth 1 --progress origin "$want" \
+                  && git -C agnos-kernel-sdm845 checkout -q --force FETCH_HEAD \
+                  && [ "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" = "$want" ]; then
+                  echo "kernel fetched at $want"
+                  ok=1
+                  break
+                fi
+                echo "=== fetch failed from $url, trying next mirror ==="
+                rm -rf agnos-kernel-sdm845
+              done
+              [ -n "$ok" ] || { echo "all kernel mirrors failed"; exit 1; }
+            fi
+            # tools/extract_tools.sh 会按需 git lfs pull（.deb/.ko/字体等）
+
+        - name: apply and verify C3X/C4 USB-PD patches
+          script: |
+            set -e
+            git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+            git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+            git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+            git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+            grep -q 'Source request: rdo=' agnos-kernel-sdm845/drivers/usb/pd/policy_engine.c
+            grep -q 'mdwc->curr_perf_mode == perf_mode' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
+            grep -q 'quiet loglevel=3' build_kernel.sh
+
+        - name: apply native Bluetooth patch and check userspace
+          script: |
+            set -e
+            git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+            git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+            bash -n userspace/root/usr/comma/bluetooth-radio
+            python3 scripts/check_bluetooth_trial.py
+            ./scripts/validate_carrot_inputs.sh
+
+        - name: warm prebuilt kernel builder image (optional)
+          script: |
+            # 仓库制品库里若已有预构建镜像则直接复用，跳过每次的 docker build；
+            # 不存在也不影响构建（build_kernel.sh 会现场构建）。
+            docker pull docker.cnb.cool/mouxancnb/agnos-builder/agnos-meta-builder:arm64 \
+              && docker tag docker.cnb.cool/mouxancnb/agnos-builder/agnos-meta-builder:arm64 agnos-meta-builder \
+              && echo "using prebuilt agnos-meta-builder image" \
+              || echo "no prebuilt image, build_kernel.sh will build one"
+
+        - name: build C3X/C4 boot image
+          script: |
+            set -e
+            export CCACHE_DIR="$PWD/.ccache" CCACHE_MAXSIZE=5G
+            ./build_kernel.sh
+            mv output/boot.img output/boot-c3x-c4.img
+            python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+            # CNB runner 磁盘固定配额：内核 out 树（数 GB）和 buildkit 缓存此后不再
+            # 需要（C3 构建会重新生成），不清理会导致后面 build system 阶段
+            # img2simg 写 sparse 文件时 ENOSPC（"Failed to write sparse file"）。
+            rm -rf agnos-kernel-sdm845/out
+            docker builder prune -f >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null 2>&1 || true
+            df -h /
+
+        - name: build common system image
+          script: |
+            set -e
+            echo "=== disk before system build ==="
+            df -h / || true
+            # 注意：CNB stage 脚本用 dash(sh) 执行，不支持 pipefail/PIPESTATUS，
+            # 不要在这里用管道 tee；完整日志可通过 runner log API 拉取
+            GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh
+            echo "=== disk after system build ==="
+            df -h / || true
+
+        - name: reset kernel source and apply C3/C3 clone patches
+          script: |
+            set -e
+            git -C agnos-kernel-sdm845 reset --hard
+            git -C agnos-kernel-sdm845 clean -fdx
+            git -C agnos-kernel-sdm845 apply --check ../patches/c3-tici-pcie-nvme.patch
+            git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
+            git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
+            git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
+            git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
+            git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+            git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
+            git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
+
+        - name: build and verify C3/C3 clone boot image
+          script: |
+            set -e
+            export CCACHE_DIR="$PWD/.ccache" CCACHE_MAXSIZE=5G
+            ./build_kernel.sh
+            mv output/boot.img output/boot-c3-c3clone.img
+            python3 scripts/check_bluetooth_trial.py --kernel-config agnos-kernel-sdm845/out/.config
+            grep -a -q 'comma tici' output/boot-c3-c3clone.img
+            grep -q '^CONFIG_PCI=y$' agnos-kernel-sdm845/out/.config
+            grep -q '^CONFIG_PCI_MSM=y$' agnos-kernel-sdm845/out/.config
+            grep -q '^CONFIG_NVME_CORE=y$' agnos-kernel-sdm845/out/.config
+            grep -q '^CONFIG_BLK_DEV_NVME=y$' agnos-kernel-sdm845/out/.config
+
+        - name: package OTA release
+          script: |
+            set -e
+            AGNOS_VERSION="$(tr -d '[:space:]' < VERSION)"
+            case "$AGNOS_VERSION" in
+              ''|*[!A-Za-z0-9._-]*)
+                echo "VERSION contains an unsafe or empty value: '$AGNOS_VERSION'" >&2
+                exit 1 ;;
+            esac
+            RELEASE_TAG="agnos-$AGNOS_VERSION"
+            echo "packaging AGNOS $AGNOS_VERSION as $RELEASE_TAG"
+            python3 scripts/package_carrot_agnos.py \
+              --version "$AGNOS_VERSION" \
+              --release-base-url "https://cnb.cool/${CNB_REPO}/-/releases/download/${RELEASE_TAG}" \
+              --system output/system.img \
+              --c3-boot output/boot-c3-c3clone.img \
+              --c4-boot output/boot-c3x-c4.img \
+              --c3-base-manifest base-manifests/agnos-c3-base.json \
+              --c4-base-manifest base-manifests/agnos-c4-base.json \
+              --output-dir output/carrot-ota
+            printf 'builder_commit=%s\n' "$(git rev-parse HEAD)" > output/carrot-ota/PROVENANCE
+            printf 'kernel_base=%s\n' "$(git -C agnos-kernel-sdm845 rev-parse HEAD)" >> output/carrot-ota/PROVENANCE
+            printf 'agnos_version=%s\n' "$AGNOS_VERSION" >> output/carrot-ota/PROVENANCE
+            printf 'openpilot_manifest_commit=%s\n' "$OPENPILOT_MANIFEST_COMMIT" >> output/carrot-ota/PROVENANCE
+            (cd output/carrot-ota && sha256sum PROVENANCE >> SHA256SUMS)
+            cp patches/BLUETOOTH.md output/carrot-ota/BLUETOOTH.md
+            (cd output/carrot-ota && sha256sum BLUETOOTH.md >> SHA256SUMS)
+            ls -lh output/carrot-ota
+
+        - name: publish release to CNB
+          script: bash .cnb/scripts/publish_cnb_release.sh
+
+# 手动触发（等同 GitHub workflow_dispatch）：页面按钮定义在 .cnb/web_trigger.yml
+"$":
+  web_trigger_build:
+    - name: build-carrot-agnos-manual
+      runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 16
+      docker:
+        image: ubuntu:24.04
+      services:
+        - docker
+      git:
+        submodules:
+          enable: false
+      env:
+        CNB_REPO: mouxancnb/agnos-builder
+        OPENPILOT_MANIFEST_COMMIT: 270da7f94ec42c473b6436263a91e2b8f195d49d
+        SPLIT_IMAGE_BUILD: "1"
+      volumes:
+        - .ccache:copy-on-write
+        - agnos-kernel-sdm845:copy-on-write
+      stages: *build_stages
