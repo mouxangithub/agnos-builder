@@ -1,0 +1,36 @@
+# Restore C3 (AGNOS 12.8-era) config lost in comma's post-12.8 slim-down:
+#
+# - CONFIG_QPNP_COINCELL: RTC backup-battery (coincell) charger. Without it the
+#   C3 coin cell never charges and the RTC resets on every main-power loss
+#   (seen as a zeroed clock after OTA reboots, breaking HTTPS until the HTTP
+#   time fallback runs). Driver (drivers/platform/msm/qpnp-coincell.c) and DT
+#   node (pm8998_coincell) are still present in the tree.
+# - CONFIG_MSM_BCL_PERIPHERAL_CTL: PMIC BCL (battery current/voltage) thermal
+#   sensors. Driver (drivers/thermal/qcom/bcl_peripheral.c) and DT node
+#   (bcl_sensor@4200 in pmi8998.dtsi) are still present in the tree.
+#
+# Both were enabled in the last full-featured C3 release (AGNOS 12.8,
+# commaai/agnos-kernel-sdm845@8b4b117) and only flipped to =n when comma
+# slimmed tici_defconfig for the 3X-only era.
+diff --git a/arch/arm64/configs/tici_defconfig b/arch/arm64/configs/tici_defconfig
+index 14e2a7e..2d3afdc 100644
+--- a/arch/arm64/configs/tici_defconfig
++++ b/arch/arm64/configs/tici_defconfig
+@@ -2705,7 +2705,7 @@ CONFIG_THERMAL_TSENS=y
+ #
+ # Qualcomm thermal drivers
+ #
+-CONFIG_MSM_BCL_PERIPHERAL_CTL=n
++CONFIG_MSM_BCL_PERIPHERAL_CTL=y
+ CONFIG_QTI_THERMAL_LIMITS_DCVS=y
+ CONFIG_QTI_VIRTUAL_SENSOR=y
+ CONFIG_QTI_AOP_REG_COOLING_DEVICE=y
+@@ -4297,7 +4297,7 @@ CONFIG_SPS=y
+ # CONFIG_SPS_SUPPORT_BAMDMA is not set
+ CONFIG_SPS_SUPPORT_NDP_BAM=y
+ # CONFIG_EP_PCIE is not set
+-CONFIG_QPNP_COINCELL=n
++CONFIG_QPNP_COINCELL=y
+ CONFIG_QPNP_REVID=y
+ # CONFIG_GPIO_USB_DETECT is not set
+ CONFIG_USB_BAM=y

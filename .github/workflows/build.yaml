@@ -99,6 +99,11 @@ jobs:
           git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
           git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
           git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
+          # restore C3-only config dropped by comma's post-12.8 slim-down
+          git -C agnos-kernel-sdm845 apply --check ../patches/c3-128-compat.patch
+          git -C agnos-kernel-sdm845 apply ../patches/c3-128-compat.patch
+          grep -q '^CONFIG_QPNP_COINCELL=y$' agnos-kernel-sdm845/arch/arm64/configs/tici_defconfig
+          grep -q '^CONFIG_MSM_BCL_PERIPHERAL_CTL=y$' agnos-kernel-sdm845/arch/arm64/configs/tici_defconfig
 
       - name: Build and verify C3/C3 clone boot image
         env:
