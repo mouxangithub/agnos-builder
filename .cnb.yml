@@ -109,11 +109,17 @@ master:
             else
               echo "kernel submodule missing/stale (have=${have:-none} want=$want), fetching"
               rm -rf agnos-kernel-sdm845
+              # 内核源 URL 跟随 .gitmodules（当前指向 StarPilotHQ fork），避免
+              # 换内核仓库后这里还硬编码 commaai 导致按 SHA fetch 404
+              kurl="$(git config -f .gitmodules --get submodule.agnos-kernel-sdm845.url)"
+              case "$kurl" in
+                git@github.com:*) kurl="https://github.com/${kurl#git@github.com:}" ;;
+              esac
               ok=""
               for url in \
-                "https://gh-proxy.com/https://github.com/commaai/agnos-kernel-sdm845.git" \
-                "https://ghfast.top/https://github.com/commaai/agnos-kernel-sdm845.git" \
-                "https://github.com/commaai/agnos-kernel-sdm845.git"; do
+                "https://gh-proxy.com/$kurl" \
+                "https://ghfast.top/$kurl" \
+                "$kurl"; do
                 echo "=== trying kernel fetch from $url ==="
                 if git init -q agnos-kernel-sdm845 \
                   && git -C agnos-kernel-sdm845 remote add origin "$url" \
