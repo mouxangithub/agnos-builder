@@ -1,0 +1,227 @@
+#!/bin/bash -e
+
+# Adapted from firestar5683/agnos-builder 75f04905701f905bf43e60cbf4cfb713039e3f0d.
+# Bring-up validated against the controller (EDL version answer + retry loop)
+# adopted from StarPilotHQ/agnos-builder; kept at 115200 because the kernel
+# qca driver performs its own baud upgrade (patches/bluetooth-wcn3990.patch).
+FIRMWARE_MOUNT=/run/carrot-bluetooth-firmware
+FIRMWARE_BIND=/lib/firmware/qca
+BLUETOOTH_STATE=/data/bluetooth
+BLUETOOTH_BIND=/var/lib/bluetooth
+
+power() {
+  /usr/bin/python3 - "$1" <<'PY'
+import fcntl
+import os
+import sys
+
+fd = os.open("/dev/btpower", os.O_RDWR)
+try:
+  fcntl.ioctl(fd, 0xBFAD, int(sys.argv[1]))
+finally:
+  os.close(fd)
+PY
+}
+
+# Power-cycle the controller, pulse it awake, then verify it actually answers
+# (EDL version request) with a retry ladder instead of a blind single pulse.
+bring_up() {
+  /usr/bin/python3 <<'PY'
+import fcntl
+import os
+import select
+import struct
+import termios
+import time
+
+UART = "/dev/ttyHS1"
+VERSION_REQUEST = bytes([0x01, 0x00, 0xFC, 0x01, 0x19])  # EDL patch version request
+SETTLE_S = (0.0, 0.25, 0.75, 1.5)  # wait before each try
+ANSWER_TIMEOUT_S = 0.3
+
+
+def power(on):
+  fd = os.open("/dev/btpower", os.O_RDWR)
+  try:
+    fcntl.ioctl(fd, 0xBFAD, int(on))
+  finally:
+    os.close(fd)
+
+
+def configure(fd, speed):
+  attrs = termios.tcgetattr(fd)
+  attrs[0] = 0
+  attrs[1] = 0
+  attrs[2] = (attrs[2] & ~(termios.CSIZE | termios.PARENB | termios.CSTOPB | termios.CRTSCTS)) | termios.CS8 | termios.CREAD | termios.CLOCAL
+  attrs[3] = 0
+  attrs[4] = speed
+  attrs[5] = speed
+  attrs[6][termios.VMIN] = 0
+  attrs[6][termios.VTIME] = 1
+  termios.tcsetattr(fd, termios.TCSANOW, attrs)
+
+
+def rts(fd, on):
+  fcntl.ioctl(fd, termios.TIOCMBIS if on else termios.TIOCMBIC, struct.pack("I", termios.TIOCM_RTS))
+
+
+def write(fd, data):
+  while data:
+    count = os.write(fd, data)
+    if count <= 0:
+      raise OSError("UART write made no progress")
+    data = data[count:]
+
+
+def send(fd, speed, value):
+  configure(fd, speed)
+  rts(fd, False)
+  write(fd, bytes([value]))
+  termios.tcdrain(fd)
+  rts(fd, True)
+
+
+def pulse(fd):
+  # WCN3990 power pulses on one open port: off at 2400 baud, then on at 115200.
+  send(fd, termios.B2400, 0xC0)
+  time.sleep(0.001)
+  send(fd, termios.B115200, 0xFC)
+  time.sleep(0.1)
+
+
+def answer(fd):
+  """Validate the EDL version response expected by the kernel QCA driver."""
+  rts(fd, True)
+  termios.tcflush(fd, termios.TCIOFLUSH)
+  write(fd, VERSION_REQUEST)
+  termios.tcdrain(fd)
+  received = b""
+  deadline = time.monotonic() + ANSWER_TIMEOUT_S
+  while (remaining := deadline - time.monotonic()) > 0:
+    if select.select([fd], [], [], remaining)[0]:
+      chunk = os.read(fd, 256)
+      if not chunk:
+        return None
+      received += chunk
+    while True:
+      start = received.find(b"\x04\xff")
+      if start < 0:
+        received = received[-1:]
+        break
+      received = received[start:]
+      if len(received) < 3:
+        break
+      if received[2] != 14:
+        received = received[2:]
+        continue
+      if len(received) < 17:
+        break
+      event, received = received[:17], received[17:]
+      if event[3:5] == b"\x00\x02":
+        return event
+  return None
+
+
+def main():
+  power(0)
+  time.sleep(2)
+  power(1)
+  powered = time.monotonic()
+  for attempt, settle in enumerate(SETTLE_S, 1):
+    time.sleep(settle)
+    fd = os.open(UART, os.O_RDWR | os.O_NOCTTY)
+    event = None
+    try:
+      pulse(fd)
+      event = answer(fd)
+    except OSError as error:
+      event = None
+      print(f"bluetooth-radio: try {attempt} could not ask the controller: {error}", flush=True)
+    finally:
+      try:
+        termios.tcflush(fd, termios.TCIOFLUSH)  # nothing stale left for btattach
+      except OSError:
+        event = None
+      os.close(fd)
+    if event is not None:
+      print(f"bluetooth-radio: controller answered on try {attempt}, {time.monotonic() - powered:.2f} s after power on: {event.hex()}", flush=True)
+      return
+  print(f"bluetooth-radio: no valid answer after {len(SETTLE_S)} tries", flush=True)
+  raise SystemExit(1)
+
+
+main()
+PY
+}
+
+prepare() {
+  model="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
+  [[ "$model" == *tici* || "$model" == *tizi* || "$model" == *mici* ]]
+
+  slot="$(sed -n 's/.*androidboot.slot_suffix=\([^ ]*\).*/\1/p' /proc/cmdline)"
+  device="/dev/disk/by-partlabel/bluetooth${slot}"
+  [[ "$slot" == _a || "$slot" == _b ]]
+  [[ -b "$device" ]]
+
+  # /lib/firmware/qca is the bind-mount target for the bluetooth firmware
+  # partition. On a read-only rootfs the directory must already exist in the
+  # image; if it is missing, temporarily remount / rw to create it.
+  for d in "$FIRMWARE_BIND" "$BLUETOOTH_BIND"; do
+    if ! mkdir -p "$d" 2>/dev/null; then
+      mount -o remount,rw /
+      mkdir -p "$d"
+      mount -o remount,ro /
+    fi
+  done
+  mkdir -p "$FIRMWARE_MOUNT" "$BLUETOOTH_STATE"
+  chmod 700 "$BLUETOOTH_STATE"
+  mountpoint -q "$FIRMWARE_MOUNT" || mount -o ro,nosuid,nodev,noexec "$device" "$FIRMWARE_MOUNT"
+  mountpoint -q "$FIRMWARE_BIND" || mount --bind "$FIRMWARE_MOUNT/image" "$FIRMWARE_BIND"
+  mount -o remount,bind,ro,nosuid,nodev,noexec "$FIRMWARE_BIND"
+  mountpoint -q "$BLUETOOTH_BIND" || mount --bind "$BLUETOOTH_STATE" "$BLUETOOTH_BIND"
+  bring_up
+  rfkill unblock bluetooth
+}
+
+ready() {
+  for _ in $(seq 1 200); do
+    [[ -e /sys/class/bluetooth/hci0 ]] && break
+    sleep 0.1
+  done
+  [[ -e /sys/class/bluetooth/hci0 ]]
+
+  systemctl start bluetooth.service
+  for _ in $(seq 1 100); do
+    busctl --system status org.bluez >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  for _ in $(seq 1 20); do
+    bluetoothctl power on >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+  info="$(hciconfig -a hci0)"
+  grep -q "UP RUNNING" <<<"$info"
+  grep -q "BD Address:" <<<"$info"
+  ! grep -q "BD Address: 00:00:00:00:00:00" <<<"$info"
+
+}
+
+stop() {
+  systemctl stop bluetooth.service || true
+}
+
+cleanup() {
+  rfkill block bluetooth || true
+  power 0 || true
+  mountpoint -q "$BLUETOOTH_BIND" && umount "$BLUETOOTH_BIND" || true
+  mountpoint -q "$FIRMWARE_BIND" && umount "$FIRMWARE_BIND" || true
+  mountpoint -q "$FIRMWARE_MOUNT" && umount "$FIRMWARE_MOUNT" || true
+}
+
+case "${1:-}" in
+  prepare) prepare ;;
+  ready) ready ;;
+  stop) stop ;;
+  cleanup) cleanup ;;
+  *) exit 2 ;;
+esac

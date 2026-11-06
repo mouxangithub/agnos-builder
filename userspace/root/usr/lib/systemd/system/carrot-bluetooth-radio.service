@@ -1,0 +1,21 @@
+[Unit]
+Description=Carrot Bluetooth radio
+After=local-fs.target dbus.service
+ConditionPathExists=/sys/firmware/devicetree/base/model
+RequiresMountsFor=/data
+
+[Service]
+Type=simple
+ExecCondition=/usr/bin/test -f /data/bluetooth/ENABLED
+ExecStartPre=/usr/comma/bluetooth-radio prepare
+ExecStart=/usr/bin/btattach -B /dev/ttyHS1 -P qca -S 115200
+ExecStartPost=/usr/comma/bluetooth-radio ready
+ExecStop=/usr/comma/bluetooth-radio stop
+ExecStopPost=/usr/comma/bluetooth-radio cleanup
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=60
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

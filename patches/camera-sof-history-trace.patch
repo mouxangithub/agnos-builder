@@ -1,0 +1,129 @@
+--- a/drivers/media/platform/msm/camera/cam_utils/cam_trace.h
++++ b/drivers/media/platform/msm/camera/cam_utils/cam_trace.h
+@@ -27,6 +27,53 @@
+ #include "cam_req_mgr_interface.h"
+ #include "cam_context.h"
+ 
++/* Passive experiment diagnostics. No printk or persistent per-frame log. */
++TRACE_EVENT(cam_csid_sof_history,
++	TP_PROTO(uint32_t hw, uint32_t res, uint64_t current_ns,
++		uint64_t previous_ns, uint64_t verify_ns, uint64_t boot_ns),
++	TP_ARGS(hw, res, current_ns, previous_ns, verify_ns, boot_ns),
++	TP_STRUCT__entry(
++		__field(uint32_t, hw)
++		__field(uint32_t, res)
++		__field(uint64_t, current_ns)
++		__field(uint64_t, previous_ns)
++		__field(uint64_t, verify_ns)
++		__field(uint64_t, boot_ns)
++	),
++	TP_fast_assign(
++		__entry->hw = hw;
++		__entry->res = res;
++		__entry->current_ns = current_ns;
++		__entry->previous_ns = previous_ns;
++		__entry->verify_ns = verify_ns;
++		__entry->boot_ns = boot_ns;
++	),
++	TP_printk("CSID hw=%u res=%u current_ns=%llu previous_ns=%llu verify_ns=%llu boot_ns=%llu",
++		__entry->hw, __entry->res, __entry->current_ns,
++		__entry->previous_ns, __entry->verify_ns, __entry->boot_ns)
++);
++
++TRACE_EVENT(cam_ife_irq_payload,
++	TP_PROTO(uint32_t hw, uint32_t status0, uint32_t status1,
++		uint64_t irq_boot_ns),
++	TP_ARGS(hw, status0, status1, irq_boot_ns),
++	TP_STRUCT__entry(
++		__field(uint32_t, hw)
++		__field(uint32_t, status0)
++		__field(uint32_t, status1)
++		__field(uint64_t, irq_boot_ns)
++	),
++	TP_fast_assign(
++		__entry->hw = hw;
++		__entry->status0 = status0;
++		__entry->status1 = status1;
++		__entry->irq_boot_ns = irq_boot_ns;
++	),
++	TP_printk("IFE hw=%u status0=0x%x status1=0x%x irq_boot_ns=%llu",
++		__entry->hw, __entry->status0, __entry->status1,
++		__entry->irq_boot_ns)
++);
++
+ TRACE_EVENT(cam_context_state,
+ 	TP_PROTO(const char *name, struct cam_context *ctx),
+ 	TP_ARGS(name, ctx),
+--- a/drivers/media/platform/msm/camera/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_core.c
++++ b/drivers/media/platform/msm/camera/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_core.c
+@@ -21,6 +21,7 @@
+ #include "cam_io_util.h"
+ #include "cam_debug_util.h"
+ #include "cam_cpas_api.h"
++#include "cam_trace.h"
+ 
+ /* Timeout value in msec */
+ #define IFE_CSID_TIMEOUT                               1000
+@@ -2092,6 +2093,39 @@
+ 	time_stamp->boot_timestamp = (uint64_t)((ts.tv_sec * 1000000000) +
+ 		ts.tv_nsec);
+ 
++	/* Read history only while explicitly tracing. Re-read current to expose
++	 * a SOF register update during the sample instead of claiming a gap.
++	 * The existing timestamp and all runtime decisions stay unchanged.
++	 */
++	if (trace_cam_csid_sof_history_enabled()) {
++		uint32_t prev_hi, prev_lo, curr_hi, curr_lo;
++		uint64_t previous, verify;
++
++		if (res->res_id == CAM_IFE_PIX_PATH_RES_IPP) {
++			prev_hi = csid_reg->ipp_reg->csid_ipp_timestamp_perv1_sof_addr;
++			prev_lo = csid_reg->ipp_reg->csid_ipp_timestamp_perv0_sof_addr;
++			curr_hi = csid_reg->ipp_reg->csid_ipp_timestamp_curr1_sof_addr;
++			curr_lo = csid_reg->ipp_reg->csid_ipp_timestamp_curr0_sof_addr;
++		} else {
++			rdi_reg = csid_reg->rdi_reg[res->res_id];
++			prev_hi = rdi_reg->csid_rdi_timestamp_prev1_sof_addr;
++			prev_lo = rdi_reg->csid_rdi_timestamp_prev0_sof_addr;
++			curr_hi = rdi_reg->csid_rdi_timestamp_curr1_sof_addr;
++			curr_lo = rdi_reg->csid_rdi_timestamp_curr0_sof_addr;
++		}
++		previous = (uint64_t)cam_io_r_mb(soc_info->reg_map[0].mem_base + prev_hi) << 32;
++		previous |= cam_io_r_mb(soc_info->reg_map[0].mem_base + prev_lo);
++		verify = (uint64_t)cam_io_r_mb(soc_info->reg_map[0].mem_base + curr_hi) << 32;
++		verify |= cam_io_r_mb(soc_info->reg_map[0].mem_base + curr_lo);
++		previous = mul_u64_u32_div(previous, CAM_IFE_CSID_QTIMER_MUL_FACTOR,
++			CAM_IFE_CSID_QTIMER_DIV_FACTOR);
++		verify = mul_u64_u32_div(verify, CAM_IFE_CSID_QTIMER_MUL_FACTOR,
++			CAM_IFE_CSID_QTIMER_DIV_FACTOR);
++		trace_cam_csid_sof_history(csid_hw->hw_intf->hw_idx, res->res_id,
++			time_stamp->time_stamp_val, previous, verify,
++			time_stamp->boot_timestamp);
++	}
++
+ 	return 0;
+ }
+ 
+--- a/drivers/media/platform/msm/camera/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c
++++ b/drivers/media/platform/msm/camera/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c
+@@ -28,6 +28,7 @@
+ #include "cam_packet_util.h"
+ #include "cam_debug_util.h"
+ #include "cam_cpas_api.h"
++#include "cam_trace.h"
+ #include "cam_mem_mgr_api.h"
+ 
+ #define CAM_IFE_HW_ENTRIES_MAX  20
+@@ -4201,6 +4202,12 @@
+ 
+ 	ife_hwr_mgr_ctx = (struct cam_ife_hw_mgr_ctx *)handler_priv;
+ 
++	if (trace_cam_ife_irq_payload_enabled())
++		trace_cam_ife_irq_payload(evt_payload->core_index,
++			evt_payload->irq_reg_val[0], evt_payload->irq_reg_val[1],
++			(uint64_t)evt_payload->ts.mono_time.tv_sec * 1000000000ULL +
++			(uint64_t)evt_payload->ts.mono_time.tv_usec * 1000ULL);
++
+ 	CAM_DBG(CAM_ISP, "addr of evt_payload = %pK core_index:%d",
+ 		(void *)evt_payload,
+ 		evt_payload->core_index);
