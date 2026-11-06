@@ -55,7 +55,7 @@ expect_hash userspace/root/usr/lib/firmware/amdgpu/gc_12_0_0_rlc.bin.zst c652022
 expect_hash userspace/root/usr/lib/firmware/amdgpu/psp_14_0_2_sos.bin.zst e81164f81e763d8de70539e7fdcc8ea58aa9b025cf9c95361a4c63bc791177f4
 expect_hash userspace/root/usr/lib/firmware/amdgpu/sdma_7_0_0.bin.zst 68add1d0817164f4fde6fd971270e4652814558545cb2400a946004126986576
 expect_hash userspace/root/usr/lib/firmware/amdgpu/smu_14_0_2.bin.zst b0a03edf1c7e5a171fafe0710165b6ce90540450d1cf00132d8f0033b6ad2099
-expect_hash userspace/root/usr/comma/bluetooth-radio 7f87dfb701dfe37c9cdb3e744358e7aebb03aad9395b715cf5e00f890269cde2
+expect_hash userspace/root/usr/comma/bluetooth-radio 700213f459452a71536713c4ab5066ecab8fecd9c550f9c4237a794241cf05d3
 expect_hash userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service 26c966c34f25c7564d78dd62859ff04b1efe63861f0875d927d72565771aea86
 # China-build setup zipapp: patched mici setup (gh-proxy downloads, zh-CHS
 # default) - rebuild with scripts/build_carrot_setup.py, then update this pin.
@@ -71,7 +71,7 @@ expect_line "$SERVICE" "Restart=on-failure"
 
 RADIO=userspace/root/usr/comma/bluetooth-radio
 expect_line "$RADIO" 'fd = os.open("/dev/btpower", os.O_RDWR)'
-expect_line "$RADIO" '  fd = os.open("/dev/ttyHS1", os.O_RDWR | os.O_NOCTTY)'
+expect_line "$RADIO" '    fd = os.open(UART, os.O_RDWR | os.O_NOCTTY)'
 expect_line "$RADIO" "    bluetoothctl power on >/dev/null 2>&1 && break"
 
 expect_line userspace/services.sh "systemctl enable carrot-bluetooth-radio.service"

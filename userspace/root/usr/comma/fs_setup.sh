@@ -23,6 +23,9 @@ touch /data/etc/localtime
 mkdir -p /data/etc/netplan
 mkdir -p /data/etc/NetworkManager/system-connections
 
+# /data/media - NVMe mount point
+mkdir -p /data/media
+
 # /cache
 chown -R comma:comma /cache/
 

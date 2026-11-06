@@ -3,7 +3,7 @@
 # Adapted from firestar5683/agnos-builder 75f04905701f905bf43e60cbf4cfb713039e3f0d.
 # Bring-up validated against the controller (EDL version answer + retry loop)
 # adopted from StarPilotHQ/agnos-builder; kept at 115200 because the kernel
-# qca driver performs its own baud upgrade (patches/bluetooth-wcn3990.patch).
+# qca driver performs its own baud upgrade.
 FIRMWARE_MOUNT=/run/carrot-bluetooth-firmware
 FIRMWARE_BIND=/lib/firmware/qca
 BLUETOOTH_STATE=/data/bluetooth

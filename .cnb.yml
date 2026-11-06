@@ -142,11 +142,9 @@ master:
             grep -q 'mdwc->curr_perf_mode == perf_mode' agnos-kernel-sdm845/drivers/usb/dwc3/dwc3-msm.c
             grep -q 'quiet loglevel=3' build_kernel.sh
 
-        - name: apply native Bluetooth patch and check userspace
+        - name: check userspace (BT support is built into the StarPilot kernel tree)
           script: |
             set -e
-            git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
-            git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
             bash -n userspace/root/usr/comma/bluetooth-radio
             python3 scripts/check_bluetooth_trial.py
             ./scripts/validate_carrot_inputs.sh
@@ -186,19 +184,15 @@ master:
             echo "=== disk after system build ==="
             df -h / || true
 
-        - name: reset kernel source and apply C3/C3 clone patches
+        - name: reset kernel source and apply C3 USB-PD patches
           script: |
             set -e
             git -C agnos-kernel-sdm845 reset --hard
             git -C agnos-kernel-sdm845 clean -fdx
-            git -C agnos-kernel-sdm845 apply --check ../patches/c3-tici-pcie-nvme.patch
-            git -C agnos-kernel-sdm845 apply ../patches/c3-tici-pcie-nvme.patch
             git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v2.patch
             git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v2.patch
             git -C agnos-kernel-sdm845 apply --check ../patches/c4-usbpd-v3.patch
             git -C agnos-kernel-sdm845 apply ../patches/c4-usbpd-v3.patch
-            git -C agnos-kernel-sdm845 apply --check ../patches/bluetooth-wcn3990.patch
-            git -C agnos-kernel-sdm845 apply ../patches/bluetooth-wcn3990.patch
 
         - name: build and verify C3/C3 clone boot image
           script: |
