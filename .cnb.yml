@@ -184,6 +184,53 @@ master:
             docker image prune -f >/dev/null 2>&1 || true
             df -h /
 
+        - name: warm system-image base cache (optional)
+          script: |
+            set -e
+            # The dind buildkit cache is force-pruned after the C3X kernel stage
+            # (storage quota), so the system image build would redo the apt +
+            # uv dependency base layers and the adbd/graphics compilations
+            # (the bulk of the wall time) on every run. Persist those stable
+            # stages as prebuilt images in the repo's CNB artifact registry
+            # instead, keyed by a hash of every input that affects them. On a
+            # hit, scripts/make_override_dockerfile.py swaps all three FROM
+            # anchors for the prebuilt images; buildkit then skips every
+            # stage not referenced anymore (agnos-compiler, agnos-base) and
+            # only the rootfs overlay and later layers run locally. A miss
+            # builds the three targets here, pushes them for next time, and
+            # still uses the override (the buildkit cache seeded by the local
+            # build makes the resume instant).
+            KEY=$(cat Dockerfile.agnos build_system.sh \
+              userspace/base_setup.sh userspace/openpilot_dependencies.sh \
+              userspace/openpilot_python_dependencies.sh \
+              userspace/build_adbd.sh userspace/adbd-linux.patch \
+              | sha256sum | cut -c1-12)
+            extra=$( (find userspace/uv userspace/graphics -type f \
+                     | sort | xargs -r cat) | sha256sum | cut -c1-12 )
+            KEY=$(printf '%s\n%s' "$KEY" "$extra" | sha256sum | cut -c1-12)
+            IMG="docker.cnb.cool/${CNB_REPO}/agnos-system-cache:${KEY}"
+            echo "cache image: $IMG"
+            if ! docker pull "$IMG" 2>/dev/null; then
+              echo "cache miss, building the three cacheable targets to seed the cache"
+              UBUNTU_FILE=$(grep '^UBUNTU_FILE=' build_system.sh | cut -d= -f2 | tr -d '"')
+              docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
+                --target agnos-compiler-adbd -t "$IMG-adbd" \
+                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+              docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
+                --target agnos-compiler-graphics -t "$IMG-graphics" \
+                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+              docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
+                --target agnos -t "$IMG" \
+                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+              if echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin 2>/dev/null; then
+                docker push "$IMG-adbd" && docker push "$IMG-graphics" \
+                  && docker push "$IMG" && echo "cache images pushed"
+              else
+                echo "docker login failed, cache push skipped (build continues)"
+              fi
+            fi
+            python3 scripts/make_override_dockerfile.py "$IMG"
+
         - name: build common system image
           script: |
             set -e
@@ -191,6 +238,8 @@ master:
             df -h / || true
             # 注意：CNB stage 脚本用 dash(sh) 执行，不支持 pipefail/PIPESTATUS，
             # 不要在这里用管道 tee；完整日志可通过 runner log API 拉取
+            export AGNOS_DOCKERFILE=/tmp/Dockerfile.agnos.cached
+            [ -f "$AGNOS_DOCKERFILE" ] || AGNOS_DOCKERFILE=Dockerfile.agnos
             GIT_HASH="$(git rev-parse HEAD)" ./build_system.sh
             echo "=== disk after system build ==="
             df -h / || true

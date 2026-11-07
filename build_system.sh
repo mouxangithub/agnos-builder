@@ -21,9 +21,19 @@ OUT_IMAGE="$OUTPUT_DIR/system.img"
 mkdir -p $BUILD_DIR $OUTPUT_DIR
 
 # Download Ubuntu Base if not done already
+# Prefer the CNB-local mirrors first (the runner is in mainland China and
+# cdimage.ubuntu.com is slow there); fall back to the official source.
 if [ ! -f $UBUNTU_FILE ]; then
-  echo -e "Downloading Ubuntu Base: $UBUNTU_FILE"
-  if ! curl -C - -o $UBUNTU_FILE $UBUNTU_BASE_URL/$UBUNTU_FILE --silent --remote-time --fail; then
+  for url in \
+    "$UBUNTU_BASE_URL/$UBUNTU_FILE" \
+    "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release/$UBUNTU_FILE"; do
+    echo -e "Downloading Ubuntu Base: $url"
+    if curl --connect-timeout 10 -C - -o $UBUNTU_FILE "$url" --silent --remote-time --fail; then
+      break
+    fi
+    rm -f $UBUNTU_FILE
+  done
+  if [ ! -f $UBUNTU_FILE ]; then
     echo "Download failed, please check Ubuntu releases: $UBUNTU_BASE_URL"
     exit 1
   fi
@@ -43,7 +53,12 @@ fi
 
 # Check agnos-builder Dockerfile
 export DOCKER_BUILDKIT=1
-docker buildx build -f Dockerfile.agnos --check $DIR
+# CNB pipeline can point this at an override Dockerfile whose stable base
+# stages (apt + uv dependency layers) are replaced by a prebuilt image from
+# the CNB artifact registry (see the "warm system-image base cache" stage in
+# .cnb.yml); everything else stays identical.
+AGNOS_DOCKERFILE=${AGNOS_DOCKERFILE:-Dockerfile.agnos}
+docker buildx build -f $AGNOS_DOCKERFILE --check $DIR
 
 GIT_HASH=${GIT_HASH:-$(git --git-dir=$DIR/.git rev-parse HEAD)}
 BUILD_DATETIME="$(date '+%Y-%m-%dT%H:%M:%S')"
@@ -85,7 +100,7 @@ elif [ -n "$SPLIT_IMAGE_BUILD" ]; then
   fi
   echo "Building system image (split: rootfs in docker, assembly on host)"
   rm -rf $BUILD_DIR/image && mkdir -p $BUILD_DIR/image
-  docker buildx build -f Dockerfile.agnos $DIR --platform=linux/arm64 \
+  docker buildx build -f $AGNOS_DOCKERFILE $DIR --platform=linux/arm64 \
     --target agnos -t agnos-rootfs:local \
     --build-arg UBUNTU_BASE_IMAGE=$UBUNTU_FILE \
     --build-arg GIT_HASH=$GIT_HASH \
