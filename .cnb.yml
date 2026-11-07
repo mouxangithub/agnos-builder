@@ -200,7 +200,7 @@ master:
             # builds the three targets here, pushes them for next time, and
             # still uses the override (the buildkit cache seeded by the local
             # build makes the resume instant).
-            KEY=$(cat Dockerfile.agnos build_system.sh \
+            KEY=$(cat Dockerfile.agnos build_system.sh scripts/prepare_ubuntu_base.sh \
               userspace/base_setup.sh userspace/openpilot_dependencies.sh \
               userspace/openpilot_python_dependencies.sh \
               userspace/build_adbd.sh userspace/adbd-linux.patch \
@@ -212,16 +212,20 @@ master:
             echo "cache image: $IMG"
             if ! docker pull "$IMG" 2>/dev/null; then
               echo "cache miss, building the three cacheable targets to seed the cache"
-              UBUNTU_FILE=$(grep '^UBUNTU_FILE=' build_system.sh | cut -d= -f2 | tr -d '"')
+              # the warm stage runs before build_system.sh, which is what
+              # normally downloads the tarball the Dockerfile ADDs - prepare
+              # it here first (bug from the first cut: ADD failed with
+              # "ubuntu-base...tar.gz: not found")
+              ./scripts/prepare_ubuntu_base.sh
               docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
                 --target agnos-compiler-adbd -t "$IMG-adbd" \
-                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+                --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
               docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
                 --target agnos-compiler-graphics -t "$IMG-graphics" \
-                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+                --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
               docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
                 --target agnos -t "$IMG" \
-                --build-arg UBUNTU_BASE_IMAGE="$UBUNTU_FILE"
+                --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
               if echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin 2>/dev/null; then
                 docker push "$IMG-adbd" && docker push "$IMG-graphics" \
                   && docker push "$IMG" && echo "cache images pushed"

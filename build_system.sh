@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-UBUNTU_BASE_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/"
-UBUNTU_FILE="ubuntu-base-24.04.3-base-arm64.tar.gz"
-UBUNTU_FILE_CHECKSUM="7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48dabb048"
-
 # Make sure we're in the correct spot
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 cd $DIR
 
 # Fail fast on clobbered checked-in inputs before any Docker work starts.
 ./scripts/validate_carrot_inputs.sh
+
+# Download (or reuse) and verify the Ubuntu Base tarball; shared with the
+# CNB warm-cache stage which runs before this script.
+./scripts/prepare_ubuntu_base.sh
+UBUNTU_FILE="ubuntu-base-24.04.3-base-arm64.tar.gz"
 
 BUILD_DIR="$DIR/build"
 OUTPUT_DIR="$DIR/output"
@@ -19,31 +20,6 @@ OUT_IMAGE="$OUTPUT_DIR/system.img"
 
 # Create temp dir if non-existent
 mkdir -p $BUILD_DIR $OUTPUT_DIR
-
-# Download Ubuntu Base if not done already
-# Prefer the CNB-local mirrors first (the runner is in mainland China and
-# cdimage.ubuntu.com is slow there); fall back to the official source.
-if [ ! -f $UBUNTU_FILE ]; then
-  for url in \
-    "$UBUNTU_BASE_URL/$UBUNTU_FILE" \
-    "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release/$UBUNTU_FILE"; do
-    echo -e "Downloading Ubuntu Base: $url"
-    if curl --connect-timeout 10 -C - -o $UBUNTU_FILE "$url" --silent --remote-time --fail; then
-      break
-    fi
-    rm -f $UBUNTU_FILE
-  done
-  if [ ! -f $UBUNTU_FILE ]; then
-    echo "Download failed, please check Ubuntu releases: $UBUNTU_BASE_URL"
-    exit 1
-  fi
-fi
-
-# Check SHA256 sum
-if [ "$(shasum -a 256 "$UBUNTU_FILE" | awk '{print $1}')" != "$UBUNTU_FILE_CHECKSUM" ]; then
-  echo "Checksum mismatch, please check Ubuntu releases: $UBUNTU_BASE_URL"
-  exit 1
-fi
 
 # Setup qemu multiarch, not needed for remote arm64 builds
 if [ "$(uname -m)" = "x86_64" ] && [ -z "$NS" ]; then
