@@ -2,16 +2,16 @@
 """Generate an override Dockerfile.agnos that swaps the stable base stages
 for a prebuilt image from the CNB artifact registry.
 
-Dockerfile.agnos declares a cache boundary:
+Dockerfile.agnos splits the agnos stage around a cache boundary:
 
-    FROM agnos AS agnos-system    <- everything above is baked into the
-    FROM agnos-system AS agnos       prebuilt image (apt layers, uv deps,
-                                     adbd/graphics builds)
+    FROM agnos-base AS agnos-base2   <- stable prefix (apt layers, uv deps,
+                                        adbd/graphics builds)
+    FROM agnos-base2 AS agnos        <- kernel headers + rootfs overlay,
+                                        rebuilt every run
 
-The override replaces the second FROM with the prebuilt image. buildkit
-then skips every stage not referenced anymore (agnos-compiler*,
-agnos-base, agnos-system) and only the rootfs overlay and later layers
-run locally.
+The override replaces the second FROM with the prebuilt image so buildkit
+skips agnos-base2 and every stage above it (agnos-compiler*, agnos-base)
+entirely, and only the rootfs overlay and later layers run locally.
 
 IMPORTANT: the replacement stage must contain ONLY the FROM (+ ARG
 re-declarations). Re-running the cached stages' instructions on top of
@@ -35,7 +35,7 @@ def main() -> int:
     out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUTPUT
 
     src = open("Dockerfile.agnos", encoding="utf-8").read()
-    old = "FROM agnos-system AS agnos\n"
+    old = "FROM agnos-base2 AS agnos\n"
     if src.count(old) != 1:
         print(f"ERROR: anchor {old!r} found {src.count(old)} times (expected 1)", file=sys.stderr)
         return 1

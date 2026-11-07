@@ -191,12 +191,12 @@ master:
             # (storage quota), so the system image build would redo the apt +
             # uv dependency base layers and the adbd/graphics compilations
             # (the bulk of the wall time) on every run. Persist those stable
-            # stages as one prebuilt image (target agnos-system, see the cache
+            # stages as one prebuilt image (target agnos-base2, see the cache
             # boundary in Dockerfile.agnos) in the repo's CNB artifact registry,
             # keyed by a hash of every input that affects them. On a hit,
             # scripts/make_override_dockerfile.py swaps the agnos stage's base
             # for the prebuilt image; buildkit then skips every stage not
-            # referenced anymore (agnos-compiler*, agnos-base, agnos-system)
+            # referenced anymore (agnos-compiler*, agnos-base, agnos-base2)
             # and only the rootfs overlay and later layers run locally. A miss
             # builds the target here, pushes it for next time, and still uses
             # the override (the buildkit cache seeded by the local build makes
@@ -212,14 +212,14 @@ master:
             IMG="docker.cnb.cool/${CNB_REPO}/agnos-system-cache:${KEY}"
             echo "cache image: $IMG"
             if ! docker pull "$IMG" 2>/dev/null; then
-              echo "cache miss, building the agnos-system target to seed the cache"
+              echo "cache miss, building the agnos-base2 target to seed the cache"
               # the warm stage runs before build_system.sh, which is what
               # normally downloads the tarball the Dockerfile ADDs - prepare
               # it here first (bug from the first cut: ADD failed with
               # "ubuntu-base...tar.gz: not found")
               ./scripts/prepare_ubuntu_base.sh
               docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
-                --target agnos-system -t "$IMG" \
+                --target agnos-base2 -t "$IMG" \
                 --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
               if echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin 2>/dev/null; then
                 docker push "$IMG" && echo "cache image pushed"

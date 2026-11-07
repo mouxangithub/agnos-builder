@@ -67,7 +67,15 @@ RUN /tmp/agnos/openpilot_python_dependencies.sh
 # ################### #
 # ###### AGNOS ###### #
 # ################### #
-FROM agnos-base AS agnos
+# The agnos stage is split around a cache boundary used by the CI
+# warm-cache stage (.cnb.yml / scripts/make_override_dockerfile.py):
+#   agnos-base2  <- everything stable (apt layers, uv deps, adbd/graphics)
+#   agnos        <- kernel headers + rootfs overlay, rebuilt every run
+# The override swaps "FROM agnos-base2 AS agnos" for the prebuilt image so
+# buildkit skips the stable stages entirely. The GitHub chain (plain
+# docker build) follows the identical layer graph - just with an extra
+# alias - and produces the same image.
+FROM agnos-base AS agnos-base2
 
 COPY --from=agnos-compiler-adbd /tmp/agnos/adbd /usr/comma/adbd
 COPY --from=agnos-compiler-adbd /tmp/adbd-build/packages/modules/adb/NOTICE /usr/share/doc/adbd/NOTICE
@@ -111,14 +119,9 @@ COPY ./userspace/install_extras.sh /tmp/agnos/
 RUN /tmp/agnos/install_extras.sh
 RUN /usr/comma/adbd --version
 
-# Cache boundary for the CI warm-cache stage (.cnb.yml): everything above
-# is stable (apt layers, uv dependency tree, adbd/graphics builds) and is
-# baked into the prebuilt agnos-system image; everything below depends on
-# the kernel headers and the rootfs overlay and runs locally every time.
-# Replacing the second FROM with the prebuilt image makes buildkit skip
-# every stage above (agnos-compiler*, agnos-base) entirely.
-FROM agnos AS agnos-system
-FROM agnos-system AS agnos
+# agnos continues here with the parts that depend on the kernel headers
+# and the rootfs overlay and are rebuilt on every run.
+FROM agnos-base2 AS agnos
 
 # Root filesystem overlay, all files at their final paths.
 # tar keeps the ownership and permissions of existing directories, COPY resets them.
