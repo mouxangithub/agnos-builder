@@ -191,15 +191,16 @@ master:
             # (storage quota), so the system image build would redo the apt +
             # uv dependency base layers and the adbd/graphics compilations
             # (the bulk of the wall time) on every run. Persist those stable
-            # stages as prebuilt images in the repo's CNB artifact registry
-            # instead, keyed by a hash of every input that affects them. On a
-            # hit, scripts/make_override_dockerfile.py swaps all three FROM
-            # anchors for the prebuilt images; buildkit then skips every
-            # stage not referenced anymore (agnos-compiler, agnos-base) and
-            # only the rootfs overlay and later layers run locally. A miss
-            # builds the three targets here, pushes them for next time, and
-            # still uses the override (the buildkit cache seeded by the local
-            # build makes the resume instant).
+            # stages as one prebuilt image (target agnos-system, see the cache
+            # boundary in Dockerfile.agnos) in the repo's CNB artifact registry,
+            # keyed by a hash of every input that affects them. On a hit,
+            # scripts/make_override_dockerfile.py swaps the agnos stage's base
+            # for the prebuilt image; buildkit then skips every stage not
+            # referenced anymore (agnos-compiler*, agnos-base, agnos-system)
+            # and only the rootfs overlay and later layers run locally. A miss
+            # builds the target here, pushes it for next time, and still uses
+            # the override (the buildkit cache seeded by the local build makes
+            # the resume instant).
             KEY=$(cat Dockerfile.agnos build_system.sh scripts/prepare_ubuntu_base.sh \
               userspace/base_setup.sh userspace/openpilot_dependencies.sh \
               userspace/openpilot_python_dependencies.sh \
@@ -211,24 +212,17 @@ master:
             IMG="docker.cnb.cool/${CNB_REPO}/agnos-system-cache:${KEY}"
             echo "cache image: $IMG"
             if ! docker pull "$IMG" 2>/dev/null; then
-              echo "cache miss, building the three cacheable targets to seed the cache"
+              echo "cache miss, building the agnos-system target to seed the cache"
               # the warm stage runs before build_system.sh, which is what
               # normally downloads the tarball the Dockerfile ADDs - prepare
               # it here first (bug from the first cut: ADD failed with
               # "ubuntu-base...tar.gz: not found")
               ./scripts/prepare_ubuntu_base.sh
               docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
-                --target agnos-compiler-adbd -t "$IMG-adbd" \
-                --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
-              docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
-                --target agnos-compiler-graphics -t "$IMG-graphics" \
-                --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
-              docker buildx build -f Dockerfile.agnos "$PWD" --platform=linux/arm64 \
-                --target agnos -t "$IMG" \
+                --target agnos-system -t "$IMG" \
                 --build-arg UBUNTU_BASE_IMAGE=ubuntu-base-24.04.3-base-arm64.tar.gz
               if echo "$CNB_TOKEN" | docker login docker.cnb.cool -u cnb --password-stdin 2>/dev/null; then
-                docker push "$IMG-adbd" && docker push "$IMG-graphics" \
-                  && docker push "$IMG" && echo "cache images pushed"
+                docker push "$IMG" && echo "cache image pushed"
               else
                 echo "docker login failed, cache push skipped (build continues)"
               fi

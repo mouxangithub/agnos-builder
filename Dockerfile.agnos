@@ -111,6 +111,15 @@ COPY ./userspace/install_extras.sh /tmp/agnos/
 RUN /tmp/agnos/install_extras.sh
 RUN /usr/comma/adbd --version
 
+# Cache boundary for the CI warm-cache stage (.cnb.yml): everything above
+# is stable (apt layers, uv dependency tree, adbd/graphics builds) and is
+# baked into the prebuilt agnos-system image; everything below depends on
+# the kernel headers and the rootfs overlay and runs locally every time.
+# Replacing the second FROM with the prebuilt image makes buildkit skip
+# every stage above (agnos-compiler*, agnos-base) entirely.
+FROM agnos AS agnos-system
+FROM agnos-system AS agnos
+
 # Root filesystem overlay, all files at their final paths.
 # tar keeps the ownership and permissions of existing directories, COPY resets them.
 # --mode=go-w makes the result independent of the umask of the checkout.

@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """Generate an override Dockerfile.agnos that swaps the stable base stages
-for prebuilt images from the CNB artifact registry.
+for a prebuilt image from the CNB artifact registry.
 
-The three stages replaced (all cached by the CI "warm system-image base
-cache" stage) are the bulk of the system image build wall time and change
-rarely:
-  agnos-compiler-adbd    <- prebuilt image containing the compiled adbd
-  agnos-compiler-graphics <- prebuilt image containing the graphics libs
-  agnos-base             <- prebuilt image containing apt + uv dependency layers
+Dockerfile.agnos declares a cache boundary:
 
-buildkit skips every stage nothing references anymore (agnos-compiler,
-agnos-base), so a cache hit turns the heavy front half of the build into an
-image pull and only the rootfs overlay and later layers run locally.
+    FROM agnos AS agnos-system    <- everything above is baked into the
+    FROM agnos-system AS agnos       prebuilt image (apt layers, uv deps,
+                                     adbd/graphics builds)
 
-Usage: make_override_dockerfile.py <image-ref-prefix> [output]
-  image-ref-prefix  e.g. docker.cnb.cool/<repo>/agnos-system-cache:<key>
-                    -adbd / -graphics suffixes are appended for the other two
-  output            defaults to /tmp/Dockerfile.agnos.cached
+The override replaces the second FROM with the prebuilt image. buildkit
+then skips every stage not referenced anymore (agnos-compiler*,
+agnos-base, agnos-system) and only the rootfs overlay and later layers
+run locally.
+
+IMPORTANT: the replacement stage must contain ONLY the FROM (+ ARG
+re-declarations). Re-running the cached stages' instructions on top of
+the prebuilt image would repeat the apt/uv work and break idempotent
+scripts (e.g. build_adbd.sh re-patching an already-patched tree).
+
+Usage: make_override_dockerfile.py <image-ref> [output]
+  image-ref   e.g. docker.cnb.cool/<repo>/agnos-system-cache:<key>
+  output      defaults to /tmp/Dockerfile.agnos.cached
 """
 import sys
 
@@ -31,22 +35,15 @@ def main() -> int:
     out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUTPUT
 
     src = open("Dockerfile.agnos", encoding="utf-8").read()
-    replacements = [
-        ("FROM agnos-compiler AS agnos-compiler-adbd",
-         f"FROM {img}-adbd AS agnos-compiler-adbd"),
-        ("FROM agnos-compiler AS agnos-compiler-graphics",
-         f"FROM {img}-graphics AS agnos-compiler-graphics"),
-        # USERNAME's ARG lives in the skipped agnos-base stage, so re-declare
-        # it inside agnos or the --check lint fails with UndefinedVar
-        # (check=error=true promotes the warning to an error)
-        ("FROM agnos-base AS agnos",
-         f"FROM {img} AS agnos\nARG USERNAME=comma"),
-    ]
-    for old, new in replacements:
-        if src.count(old) != 1:
-            print(f"ERROR: anchor {old!r} found {src.count(old)} times (expected 1)", file=sys.stderr)
-            return 1
-        src = src.replace(old, new, 1)
+    old = "FROM agnos-system AS agnos\n"
+    if src.count(old) != 1:
+        print(f"ERROR: anchor {old!r} found {src.count(old)} times (expected 1)", file=sys.stderr)
+        return 1
+    # USERNAME's ARG lives in the skipped agnos-base stage, so re-declare it
+    # or the --check lint fails with UndefinedVar (check=error=true
+    # promotes the warning to an error)
+    new = f"FROM {img} AS agnos\nARG USERNAME=comma\n"
+    src = src.replace(old, new, 1)
 
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(src)
