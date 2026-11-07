@@ -15,6 +15,7 @@ Run from the agnos-builder repo root:
 
   python3 scripts/build_carrot_setup.py
 """
+import io
 import os
 import re
 import sys
@@ -131,10 +132,30 @@ def main() -> int:
   if FONT_ENTRY not in order:
     order.append(FONT_ENTRY)
 
-  tmp = SETUP_PATH.with_suffix(".tmp")
-  with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+  # comma.sh exec's /usr/comma/setup directly, so the file must carry an
+  # interpreter shebang before the zip data (upstream /usr/comma/reset has
+  # the same prefix). Rewriting with zipfile alone would silently drop that
+  # prefix, leaving a file the kernel refuses to exec ("Exec format error"
+  # -> comma.sh loops "waiting for installer" forever -> stuck on the boot
+  # logo after an uninstall or factory reset).
+  with open(SETUP_PATH, "rb") as f:
+    original = f.read()
+  prefix = b""
+  if original.startswith(b"#!"):
+    idx = original.find(b"PK\x03\x04")
+    if idx != -1:
+      prefix = original[:idx]
+  if not prefix:
+    prefix = b"#!/usr/bin/env python3\n"
+
+  buf = io.BytesIO()
+  with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
     for name in order:
       zout.writestr(name, entries[name])
+
+  tmp = SETUP_PATH.with_suffix(".tmp")
+  with open(tmp, "wb") as f:
+    f.write(prefix + buf.getvalue())
   os.replace(tmp, SETUP_PATH)
 
   patched_names = ", ".join(p.rsplit("/", 1)[-1] for p in PATCHED_APPS)

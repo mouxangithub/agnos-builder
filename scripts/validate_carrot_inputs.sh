@@ -59,7 +59,7 @@ expect_hash userspace/root/usr/comma/bluetooth-radio 700213f459452a71536713c4ab5
 expect_hash userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service 26c966c34f25c7564d78dd62859ff04b1efe63861f0875d927d72565771aea86
 # China-build setup zipapp: patched mici setup (gh-proxy downloads, zh-CHS
 # default) - rebuild with scripts/build_carrot_setup.py, then update this pin.
-expect_hash userspace/root/usr/comma/setup 21206740b1fd167efee2968bd989403cfef4df0839dade6b002d3896096bdbc6
+expect_hash userspace/root/usr/comma/setup cbbc765e6e970564cddfd817e675aad7324d3a5729c39294b1bd53c1dec51174
 expect_hash userspace/root/etc/gitconfig 1ae5d95cfa104917f33ab249b47b8091ee76b9d646c14380f58d454def42bd11
 
 SERVICE=userspace/root/usr/lib/systemd/system/carrot-bluetooth-radio.service
