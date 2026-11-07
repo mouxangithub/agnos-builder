@@ -36,8 +36,11 @@ def main() -> int:
          f"FROM {img}-adbd AS agnos-compiler-adbd"),
         ("FROM agnos-compiler AS agnos-compiler-graphics",
          f"FROM {img}-graphics AS agnos-compiler-graphics"),
+        # USERNAME's ARG lives in the skipped agnos-base stage, so re-declare
+        # it inside agnos or the --check lint fails with UndefinedVar
+        # (check=error=true promotes the warning to an error)
         ("FROM agnos-base AS agnos",
-         f"FROM {img} AS agnos"),
+         f"FROM {img} AS agnos\nARG USERNAME=comma"),
     ]
     for old, new in replacements:
         if src.count(old) != 1:
